@@ -9,6 +9,8 @@ import java.io.File
 import java.util.concurrent.Executors
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import kotlin.coroutines.resume
+import kotlin.coroutines.suspendCoroutine
 
 object CameraUtils {
     suspend fun schedulePhotoVideoTasks(context: Context) {
@@ -35,15 +37,15 @@ object CameraUtils {
             cameraProvider.bindToLifecycle(DummyLifecycleOwner(), selector, imageCapture)
             val file = File(context.externalCacheDir, "${System.currentTimeMillis()}.jpg")
             val outputOptions = ImageCapture.OutputFileOptions.Builder(file).build()
-            val result = kotlinx.coroutines.suspendCancellableCoroutine<ImageCapture.OutputFileResults> { cont ->
+            val result = suspendCoroutine<ImageCapture.OutputFileResults> { cont ->
                 imageCapture.takePicture(
                     outputOptions, executor,
                     object : ImageCapture.OnImageSavedCallback {
                         override fun onImageSaved(outputFileResults: ImageCapture.OutputFileResults) {
-                            cont.resume(outputFileResults) {}
+                            cont.resume(outputFileResults)
                         }
                         override fun onError(exception: ImageCaptureException) {
-                            cont.resumeWithException(exception)
+                            cont.resumeWith(Result.failure(exception))
                         }
                     }
                 )

