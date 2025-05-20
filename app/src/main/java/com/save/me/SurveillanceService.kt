@@ -1,8 +1,10 @@
 package com.save.me
 
 import android.app.Service
+import android.content.Context
 import android.content.Intent
 import android.os.IBinder
+import android.util.Log
 import kotlinx.coroutines.*
 
 class SurveillanceService : Service() {
@@ -10,8 +12,16 @@ class SurveillanceService : Service() {
     private val job = SupervisorJob()
     private val scope = CoroutineScope(Dispatchers.IO + job)
 
+    companion object {
+        // Keeps a reference to the service context for notification updates
+        @Volatile
+        var serviceContext: Context? = null
+    }
+
     override fun onCreate() {
         super.onCreate()
+        serviceContext = this
+        Log.d("SurveillanceService", "Service created and foreground notification starting.")
         NotificationUtils.createNotificationChannel(this)
         startForeground(1, NotificationUtils.buildForegroundNotification(this))
 
@@ -27,6 +37,8 @@ class SurveillanceService : Service() {
 
     override fun onDestroy() {
         super.onDestroy()
+        serviceContext = null
+        Log.d("SurveillanceService", "Service destroyed.")
         job.cancel()
     }
 }
