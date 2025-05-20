@@ -1,0 +1,5 @@
+<resources>
+    <string name="app_name">Find My Device</string>
+    <string name="connected">Connected to Supabase</string>
+    <string name="not_connected">Not connected to Supabase</string>
+</resources>
