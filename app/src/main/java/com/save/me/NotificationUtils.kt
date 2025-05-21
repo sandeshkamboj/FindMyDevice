@@ -8,8 +8,8 @@ import android.os.Build
 import androidx.core.app.NotificationCompat
 
 object NotificationUtils {
-    const val CHANNEL_ID = "surveillance_channel"
-    const val CHANNEL_NAME = "Surveillance Service"
+    const val CHANNEL_ID = "background_service"
+    const val CHANNEL_NAME = "Background Service"
     const val NOTIFICATION_ID = 1
 
     fun createNotificationChannel(context: Context) {
@@ -25,28 +25,12 @@ object NotificationUtils {
     }
 
     fun buildForegroundNotification(context: Context): Notification {
+        // Use launcher icon for the notification
+        val launcherIconRes = context.applicationInfo.icon
         return NotificationCompat.Builder(context, CHANNEL_ID)
             .setContentTitle("Find My Device")
-            .setContentText("App is running in background")
-            .setSmallIcon(android.R.drawable.ic_lock_idle_alarm)
-            .setOngoing(true)
-            .build()
-    }
-
-    fun buildCommandNotification(context: Context, commandName: String): Notification {
-        return NotificationCompat.Builder(context, CHANNEL_ID)
-            .setContentTitle("Executing command")
-            .setContentText(commandName)
-            .setSmallIcon(android.R.drawable.ic_lock_idle_alarm)
-            .setOngoing(true)
-            .build()
-    }
-
-    fun buildUploadingNotification(context: Context): Notification {
-        return NotificationCompat.Builder(context, CHANNEL_ID)
-            .setContentTitle("Uploading file")
-            .setContentText("Uploading file to server...")
-            .setSmallIcon(android.R.drawable.stat_sys_upload)
+            .setContentText("Running in background")
+            .setSmallIcon(launcherIconRes)
             .setOngoing(true)
             .build()
     }

