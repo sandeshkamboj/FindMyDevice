@@ -16,10 +16,15 @@ import android.widget.Toast
 import androidx.work.*
 import kotlinx.coroutines.*
 import java.util.concurrent.TimeUnit
+import com.google.firebase.messaging.FirebaseMessaging
+import android.util.Log
+import android.widget.Button
 
 class MainActivity : AppCompatActivity() {
     private lateinit var statusText: TextView
     private lateinit var statusIcon: ImageView
+    private lateinit var fcmTokenText: TextView
+    private lateinit var fetchFcmTokenButton: Button
 
     private val ALL_PERMISSIONS = mutableListOf(
         Manifest.permission.CAMERA,
@@ -49,7 +54,33 @@ class MainActivity : AppCompatActivity() {
         statusText = findViewById(R.id.status_text)
         statusIcon = findViewById(R.id.status_icon)
 
+        // Add these views in your activity_main.xml for FCM testing
+        fcmTokenText = findViewById(R.id.fcm_token_text)
+        fetchFcmTokenButton = findViewById(R.id.fetch_fcm_token_button)
+
+        fetchFcmTokenButton.setOnClickListener {
+            fetchAndDisplayFcmToken()
+        }
+
+        fetchAndDisplayFcmToken()
         checkAndRequestAllPermissions()
+    }
+
+    private fun fetchAndDisplayFcmToken() {
+        FirebaseMessaging.getInstance().token.addOnCompleteListener { task ->
+            if (!task.isSuccessful) {
+                val msg = "Fetching FCM registration token failed: ${task.exception?.message}"
+                Log.w("FCM", msg)
+                fcmTokenText.text = msg
+                return@addOnCompleteListener
+            }
+            // Get new FCM registration token
+            val token = task.result
+            val msg = "FCM Token: $token"
+            Log.d("FCM", msg)
+            fcmTokenText.text = msg
+            // You can also copy this token for testing in Firebase Console
+        }
     }
 
     private fun checkAndRequestAllPermissions() {
