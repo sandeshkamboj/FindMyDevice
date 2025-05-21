@@ -129,4 +129,22 @@ object SupabaseUtils {
             }
         }
     }
+
+    // NEW: Update the user's FCM token in the users table (add fcm_token column in Supabase)
+    suspend fun updateFcmToken(token: String) = withContext(Dispatchers.IO) {
+        val uid = userId ?: return@withContext
+        try {
+            supabase.postgrest["users"].update(
+                buildJsonObject {
+                    put("fcm_token", token)
+                }
+            ) {
+                filter {
+                    eq("id", uid)
+                }
+            }
+        } catch (e: Exception) {
+            // Optionally: log or handle the error
+        }
+    }
 }
