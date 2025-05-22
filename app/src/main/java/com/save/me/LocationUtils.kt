@@ -8,10 +8,10 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
 object LocationUtils {
-    suspend fun scheduleLocationTasks(context: Context) {
+    suspend fun scheduleLocationTasks(context: Context, intervalMillis: Long = 15 * 60 * 1000L) {
         while (true) {
             recordLocationOnce(context)
-            delay(10 * 60 * 1000L)
+            delay(intervalMillis)
         }
     }
 
