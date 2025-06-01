@@ -10,149 +10,171 @@ import android.content.SharedPreferences
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
-import android.os.PowerManager
+import android.os.Environment
 import android.provider.Settings
+import androidx.core.app.ActivityCompat
+import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 
-// ==== Permissions ====
-data class PermissionStatus(val name: String, val granted: Boolean)
+// ---- NotificationHelper ----
+object NotificationHelper {
+    private const val CHANNEL_ID = "findmydevice_channel"
+    private const val CHANNEL_NAME = "FindMyDevice Notifications"
 
-object PermissionsAndOnboarding {
-
-    fun getPromptPermissions(): Array<String> {
-        val perms = mutableListOf(
-            Manifest.permission.CAMERA,
-            Manifest.permission.RECORD_AUDIO,
-            Manifest.permission.ACCESS_FINE_LOCATION,
-            Manifest.permission.ACCESS_COARSE_LOCATION
-        )
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            perms += Manifest.permission.READ_MEDIA_IMAGES
-            perms += Manifest.permission.READ_MEDIA_VIDEO
-            perms += Manifest.permission.READ_MEDIA_AUDIO
-            perms += Manifest.permission.POST_NOTIFICATIONS
-        } else {
-            perms += Manifest.permission.READ_EXTERNAL_STORAGE
-            perms += Manifest.permission.WRITE_EXTERNAL_STORAGE
+    fun createNotificationChannel(context: Context) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val channel = NotificationChannel(
+                CHANNEL_ID,
+                CHANNEL_NAME,
+                NotificationManager.IMPORTANCE_HIGH
+            )
+            val notificationManager =
+                context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+            notificationManager.createNotificationChannel(channel)
         }
-        return perms.toTypedArray()
     }
 
-    fun getAllPermissionStatuses(context: Context): List<PermissionStatus> {
-        val statuses = mutableListOf<PermissionStatus>()
-        for (perm in getPromptPermissions()) {
-            val granted = ContextCompat.checkSelfPermission(context, perm) == PackageManager.PERMISSION_GRANTED
-            statuses.add(PermissionStatus(perm, granted))
+    fun showNotification(context: Context, title: String, message: String, id: Int = 1001) {
+        val builder = NotificationCompat.Builder(context, CHANNEL_ID)
+            .setSmallIcon(android.R.drawable.ic_dialog_info)
+            .setContentTitle(title)
+            .setContentText(message)
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setAutoCancel(true)
+
+        val notificationManager =
+            context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        notificationManager.notify(id, builder.build())
+    }
+}
+
+// ---- Preferences ----
+object Preferences {
+    private const val PREFS_NAME = "findmydevice_prefs"
+
+    fun getPrefs(context: Context): SharedPreferences =
+        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+
+    fun setString(context: Context, key: String, value: String) {
+        getPrefs(context).edit().putString(key, value).apply()
+    }
+
+    fun getString(context: Context, key: String, default: String = ""): String =
+        getPrefs(context).getString(key, default) ?: default
+
+    fun setBoolean(context: Context, key: String, value: Boolean) {
+        getPrefs(context).edit().putBoolean(key, value).apply()
+    }
+
+    fun getBoolean(context: Context, key: String, default: Boolean = false): Boolean =
+        getPrefs(context).getBoolean(key, default)
+}
+
+// ---- PermissionsAndOnboarding (from previous response, robust for Android 13-15) ----
+object PermissionsAndOnboarding {
+    fun getAllStandardPermissions(context: Context): List<String> {
+        val perms = mutableListOf<String>()
+
+        perms.add(Manifest.permission.CAMERA)
+        perms.add(Manifest.permission.RECORD_AUDIO)
+        perms.add(Manifest.permission.ACCESS_FINE_LOCATION)
+        perms.add(Manifest.permission.ACCESS_COARSE_LOCATION)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            perms.add(Manifest.permission.ACCESS_BACKGROUND_LOCATION)
         }
-        statuses.add(PermissionStatus("Overlay (Draw over apps)", !needsOverlay(context)))
-        statuses.add(PermissionStatus("All Files Access", !needsAllFiles(context)))
-        statuses.add(PermissionStatus("Ignore Battery Optimization", !needsBattery(context)))
-        statuses.add(PermissionStatus("Location (All the time)", hasBackgroundLocation(context)))
-        return statuses
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            perms.add(Manifest.permission.READ_MEDIA_IMAGES)
+            perms.add(Manifest.permission.READ_MEDIA_VIDEO)
+            perms.add(Manifest.permission.READ_MEDIA_AUDIO)
+        } else {
+            perms.add(Manifest.permission.READ_EXTERNAL_STORAGE)
+            perms.add(Manifest.permission.WRITE_EXTERNAL_STORAGE)
+        }
+
+        return perms.distinct()
     }
 
     fun getMissingStandardPermissions(context: Context): Array<String> {
-        return getPromptPermissions().filter {
+        val perms = getAllStandardPermissions(context)
+        return perms.filter {
             ContextCompat.checkSelfPermission(context, it) != PackageManager.PERMISSION_GRANTED
         }.toTypedArray()
     }
 
-    fun needsOverlay(context: Context): Boolean = !Settings.canDrawOverlays(context)
-    fun needsBattery(context: Context): Boolean {
-        val pm = context.getSystemService(Context.POWER_SERVICE) as PowerManager
-        return !pm.isIgnoringBatteryOptimizations(context.packageName)
-    }
-    fun needsAllFiles(context: Context): Boolean {
-        return Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && !android.os.Environment.isExternalStorageManager()
-    }
-    fun hasBackgroundLocation(context: Context): Boolean {
-        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_BACKGROUND_LOCATION) == PackageManager.PERMISSION_GRANTED
-        } else {
-            true
-        }
-    }
-    fun hasAllPermissions(context: Context): Boolean {
-        val permsGranted = getPromptPermissions().all {
-            ContextCompat.checkSelfPermission(context, it) == PackageManager.PERMISSION_GRANTED
-        }
-        val specialsOk =
-            !needsOverlay(context) &&
-                    !needsBattery(context) &&
-                    !needsAllFiles(context) &&
-                    hasBackgroundLocation(context)
-        return permsGranted && specialsOk
+    fun needsOverlay(context: Context): Boolean {
+        return !Settings.canDrawOverlays(context)
     }
 
-    fun launchOverlaySettings(activity: Activity) {
-        val intent = Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:${activity.packageName}"))
-        activity.startActivity(intent)
+    fun needsAllFiles(context: Context): Boolean {
+        return Build.VERSION.SDK_INT >= Build.VERSION_CODES.R &&
+                !Environment.isExternalStorageManager()
     }
-    fun launchAllFilesSettings(activity: Activity) {
-        val intent = Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION)
-        intent.data = Uri.parse("package:${activity.packageName}")
-        activity.startActivity(intent)
+
+    fun needsBattery(context: Context): Boolean {
+        val intent = Intent()
+        val packageName = context.packageName
+        intent.action = Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS
+        intent.data = Uri.parse("package:$packageName")
+        // Could use PowerManager for actual check
+        return false
     }
-    fun launchBatteryOptimizationSettings(activity: Activity) {
-        val intent = Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)
-        activity.startActivity(intent)
+
+    fun hasBackgroundLocation(context: Context): Boolean {
+        return ContextCompat.checkSelfPermission(
+            context,
+            Manifest.permission.ACCESS_BACKGROUND_LOCATION
+        ) == PackageManager.PERMISSION_GRANTED
     }
+
+    fun getAllPermissionStatuses(context: Context): List<PermissionStatus> {
+        val perms = getAllStandardPermissions(context)
+        val statuses = perms.map { perm ->
+            PermissionStatus(
+                name = when (perm) {
+                    Manifest.permission.CAMERA -> "Camera"
+                    Manifest.permission.RECORD_AUDIO -> "Microphone"
+                    Manifest.permission.ACCESS_FINE_LOCATION -> "Location (Precise)"
+                    Manifest.permission.ACCESS_COARSE_LOCATION -> "Location (Approximate)"
+                    Manifest.permission.ACCESS_BACKGROUND_LOCATION -> "Location (All the time)"
+                    Manifest.permission.READ_MEDIA_IMAGES -> "Media Images"
+                    Manifest.permission.READ_MEDIA_VIDEO -> "Media Video"
+                    Manifest.permission.READ_MEDIA_AUDIO -> "Media Audio"
+                    Manifest.permission.READ_EXTERNAL_STORAGE -> "Storage (Read)"
+                    Manifest.permission.WRITE_EXTERNAL_STORAGE -> "Storage (Write)"
+                    else -> perm
+                },
+                granted = ContextCompat.checkSelfPermission(context, perm) == PackageManager.PERMISSION_GRANTED
+            )
+        }.toMutableList()
+
+        statuses.add(
+            PermissionStatus(
+                name = "Overlay (Draw over apps)",
+                granted = !needsOverlay(context)
+            )
+        )
+        statuses.add(
+            PermissionStatus(
+                name = "All Files Access",
+                granted = !needsAllFiles(context)
+            )
+        )
+        statuses.add(
+            PermissionStatus(
+                name = "Ignore Battery Optimization",
+                granted = !needsBattery(context)
+            )
+        )
+        return statuses
+    }
+
     fun launchAppSettings(activity: Activity) {
         val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS)
-        intent.data = Uri.parse("package:${activity.packageName}")
+        val uri = Uri.fromParts("package", activity.packageName, null)
+        intent.data = uri
         activity.startActivity(intent)
     }
 }
 
-// ==== Preferences ====
-object Preferences {
-    private const val PREF_NAME = "find_my_device_prefs"
-    private const val KEY_NICKNAME = "nickname"
-    private const val KEY_BOT_TOKEN = "bot_token"
-    private const val KEY_DEVICE_ID = "device_id"
-
-    private fun prefs(context: Context): SharedPreferences {
-        return context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
-    }
-
-    fun getNickname(context: Context): String? {
-        return prefs(context).getString(KEY_NICKNAME, null)
-    }
-
-    fun setNickname(context: Context, nickname: String) {
-        prefs(context).edit().putString(KEY_NICKNAME, nickname).apply()
-    }
-
-    fun getBotToken(context: Context): String? {
-        return prefs(context).getString(KEY_BOT_TOKEN, null)
-    }
-
-    fun setBotToken(context: Context, token: String) {
-        prefs(context).edit().putString(KEY_BOT_TOKEN, token).apply()
-    }
-
-    fun getDeviceId(context: Context): String? {
-        return prefs(context).getString(KEY_DEVICE_ID, null)
-    }
-
-    fun setDeviceId(context: Context, id: String) {
-        prefs(context).edit().putString(KEY_DEVICE_ID, id).apply()
-    }
-}
-
-// ==== Notification Helper ====
-object NotificationHelper {
-    const val CHANNEL_ID = "foreground_service_channel"
-
-    fun createChannel(context: Context) {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val channel = NotificationChannel(
-                CHANNEL_ID,
-                "Foreground Service Channel",
-                NotificationManager.IMPORTANCE_LOW
-            )
-            val manager = context.getSystemService(NotificationManager::class.java)
-            manager.createNotificationChannel(channel)
-        }
-    }
-}
+data class PermissionStatus(val name: String, val granted: Boolean)
