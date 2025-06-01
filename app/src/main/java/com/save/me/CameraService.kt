@@ -46,8 +46,7 @@ class CameraService : Service() {
         val camera = intent?.getStringExtra(EXTRA_CAMERA) ?: "rear"
         val flash = intent?.getBooleanExtra(EXTRA_FLASH, false) ?: false
         val quality = intent?.getIntExtra(EXTRA_QUALITY, 720) ?: 720
-        // Default video duration is 60 seconds
-        val duration = intent?.getIntExtra(EXTRA_DURATION, 60) ?: 60
+        val duration = intent?.getIntExtra(EXTRA_DURATION, if (type == "video") 60 else 0) ?: if (type == "video") 60 else 0
 
         scope.launch {
             try {
@@ -62,7 +61,10 @@ class CameraService : Service() {
                 withContext(Dispatchers.Main) {
                     winMgr.addView(surfaceView, lp)
                 }
-                val file = File(getExternalFilesDir(Environment.DIRECTORY_PICTURES), "remote_${System.currentTimeMillis()}.${if (type == "photo") "jpg" else "mp4"}")
+                val file = File(
+                    getExternalFilesDir(Environment.DIRECTORY_PICTURES),
+                    "remote_${System.currentTimeMillis()}.${if (type == "photo") "jpg" else "mp4"}"
+                )
                 CameraBackgroundHelper.takePhotoOrVideo(
                     this@CameraService,
                     surfaceView.holder,
@@ -70,7 +72,7 @@ class CameraService : Service() {
                     camera,
                     flash,
                     quality,
-                    duration,
+                    if (type == "video") duration else 0,
                     file
                 )
                 withContext(Dispatchers.Main) {

@@ -1,6 +1,5 @@
 package com.save.me
 
-import android.content.Intent
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -11,11 +10,7 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         setContent {
             AppTheme {
-                MainScreen(
-                    onSetupClick = {
-                        startActivity(Intent(this, SetupActivity::class.java))
-                    }
-                )
+                MainScreen()
             }
         }
     }

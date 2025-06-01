@@ -9,30 +9,43 @@ object ActionHandlers {
         type: String,
         camera: String?,
         flash: String?,
-        quality: String?
+        quality: String?,
+        duration: String? // <--- Added duration parameter
     ) {
         when (type) {
             "photo" -> {
-                val cam = camera ?: CameraService.REAR_CAMERA
-                val fl = flash == "on"
-                CameraService.start(context, cam, CameraService.PHOTO, fl, null)
+                CameraService.start(
+                    context,
+                    type = "photo",
+                    camera = camera ?: "rear",
+                    flash = flash == "on",
+                    quality = null,
+                    duration = null // duration not needed for photo
+                )
             }
             "video" -> {
-                val cam = camera ?: CameraService.REAR_CAMERA
-                val fl = flash == "on"
-                val videoQuality = when (quality) {
-                    "1080p" -> CameraService.QUALITY_1080P
-                    "720p" -> CameraService.QUALITY_720P
-                    "420p" -> CameraService.QUALITY_420P
-                    else -> CameraService.QUALITY_720P
+                val q = when (quality) {
+                    "1080p" -> 1080
+                    "720p" -> 720
+                    "420p" -> 420
+                    else -> 720
                 }
-                CameraService.start(context, cam, CameraService.VIDEO, fl, videoQuality)
+                val dur = duration?.toIntOrNull() ?: 60 // Default 60s for video
+                CameraService.start(
+                    context,
+                    type = "video",
+                    camera = camera ?: "rear",
+                    flash = flash == "on",
+                    quality = q,
+                    duration = dur
+                )
+            }
+            "audio" -> {
+                val dur = duration?.toIntOrNull() ?: 120 // Default 120s for audio
+                AudioService.start(context, dur)
             }
             "location" -> {
                 LocationService.start(context)
-            }
-            "audio" -> {
-                AudioService.start(context)
             }
             else -> Log.e("ActionHandlers", "Unknown action type: $type")
         }

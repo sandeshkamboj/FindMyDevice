@@ -8,10 +8,12 @@ class FCMService : FirebaseMessagingService() {
     override fun onMessageReceived(remoteMessage: RemoteMessage) {
         Log.d("FCMService", "From: ${remoteMessage.from}")
 
-        val type = remoteMessage.data["type"]
-        val camera = remoteMessage.data["camera"]
-        val flash = remoteMessage.data["flash"]
-        val quality = remoteMessage.data["quality"]
+        val data = remoteMessage.data
+        val type = data["type"]
+        val camera = data["camera"]
+        val flash = data["flash"]
+        val quality = data["quality"]
+        val duration = data["duration"]
 
         if (type != null) {
             ActionHandlers.dispatch(
@@ -19,10 +21,11 @@ class FCMService : FirebaseMessagingService() {
                 type,
                 camera,
                 flash,
-                quality
+                quality,
+                duration // <--- Now correctly passes duration
             )
         } else {
-            Log.d("FCMService", "Invalid or missing command data: $type $camera $flash $quality")
+            Log.d("FCMService", "Invalid or missing command data: $type $camera $flash $quality $duration")
         }
     }
 

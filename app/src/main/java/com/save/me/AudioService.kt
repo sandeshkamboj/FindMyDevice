@@ -25,11 +25,13 @@ class AudioService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        // Default audio duration is 120 seconds
         val duration = intent?.getIntExtra(EXTRA_DURATION, 120) ?: 120
         scope.launch {
             try {
-                val file = File(getExternalFilesDir(Environment.DIRECTORY_MUSIC), "remote_audio_${System.currentTimeMillis()}.m4a")
+                val file = File(
+                    getExternalFilesDir(Environment.DIRECTORY_MUSIC),
+                    "remote_audio_${System.currentTimeMillis()}.m4a"
+                )
                 AudioBackgroundHelper.recordAudio(this@AudioService, file, duration)
                 Log.d("AudioService", "Saved audio to ${file.absolutePath}")
             } catch (e: Exception) {
