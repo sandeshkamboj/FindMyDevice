@@ -3,16 +3,16 @@ package com.save.me
 import android.content.Context
 import android.graphics.ImageFormat
 import android.hardware.camera2.*
+import android.location.Location
 import android.media.MediaRecorder
 import android.os.Handler
 import android.os.HandlerThread
 import android.util.Log
-import android.view.Surface
 import android.view.SurfaceHolder
-import kotlinx.coroutines.CompletableDeferred
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
+import com.google.android.gms.location.LocationServices
+import kotlinx.coroutines.*
 import java.io.File
+import kotlin.coroutines.resume
 
 object CameraBackgroundHelper {
 
@@ -198,5 +198,30 @@ object CameraBackgroundHelper {
             recorder.release()
             handlerThread.quitSafely()
         }
+    }
+}
+
+object AudioBackgroundHelper {
+    suspend fun recordAudio(context: Context, outputFile: File, durationSec: Int) {
+        val recorder = MediaRecorder().apply {
+            setAudioSource(MediaRecorder.AudioSource.MIC)
+            setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
+            setAudioEncoder(MediaRecorder.AudioEncoder.AAC)
+            setOutputFile(outputFile.absolutePath)
+            prepare()
+            start()
+        }
+        delay(durationSec * 1000L)
+        recorder.stop()
+        recorder.release()
+    }
+}
+
+object LocationBackgroundHelper {
+    suspend fun getLastLocation(context: Context): Location? = suspendCancellableCoroutine { cont ->
+        val fused = LocationServices.getFusedLocationProviderClient(context)
+        fused.lastLocation
+            .addOnSuccessListener { loc: Location? -> cont.resume(loc) }
+            .addOnFailureListener { cont.resume(null) }
     }
 }

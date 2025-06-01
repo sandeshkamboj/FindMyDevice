@@ -56,5 +56,26 @@
         <service android:name=".CameraService" android:exported="false" />
         <service android:name=".AudioService" android:exported="false" />
         <service android:name=".LocationService" android:exported="false" />
+        <service android:name=".ForegroundActionService" android:exported="false" />
+
+        <!-- Quick Settings Tiles - now with android:exported explicitly set -->
+        <service
+            android:name=".tile.LaunchAppTileService"
+            android:label="FindMyDevice"
+            android:permission="android.permission.BIND_QUICK_SETTINGS_TILE"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.service.quicksettings.action.QS_TILE" />
+            </intent-filter>
+        </service>
+        <service
+            android:name=".tile.StartStopTileService"
+            android:label="Remote Service"
+            android:permission="android.permission.BIND_QUICK_SETTINGS_TILE"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.service.quicksettings.action.QS_TILE" />
+            </intent-filter>
+        </service>
     </application>
 </manifest>
