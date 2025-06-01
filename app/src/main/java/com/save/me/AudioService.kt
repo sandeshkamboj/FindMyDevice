@@ -15,10 +15,12 @@ class AudioService : Service() {
 
     companion object {
         const val EXTRA_DURATION = "duration"
+        const val EXTRA_CHAT_ID = "chat_id"
 
-        fun start(context: Context, duration: Int = 120) {
+        fun start(context: Context, duration: Int = 120, chatId: String? = null) {
             val intent = Intent(context, AudioService::class.java).apply {
                 putExtra(EXTRA_DURATION, duration)
+                chatId?.let { putExtra(EXTRA_CHAT_ID, it) }
             }
             context.startForegroundService(intent)
         }
@@ -26,14 +28,15 @@ class AudioService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         val duration = intent?.getIntExtra(EXTRA_DURATION, 120) ?: 120
+        val chatId = intent?.getStringExtra(EXTRA_CHAT_ID)
         scope.launch {
             try {
-                val file = File(
-                    getExternalFilesDir(Environment.DIRECTORY_MUSIC),
-                    "remote_audio_${System.currentTimeMillis()}.m4a"
-                )
+                val file = File(getExternalFilesDir(Environment.DIRECTORY_MUSIC), "remote_audio_${System.currentTimeMillis()}.m4a")
                 AudioBackgroundHelper.recordAudio(this@AudioService, file, duration)
                 Log.d("AudioService", "Saved audio to ${file.absolutePath}")
+                if (chatId != null) {
+                    UploadManager.queueUpload(file, chatId, "audio")
+                }
             } catch (e: Exception) {
                 Log.e("AudioService", "Error: $e")
             } finally {

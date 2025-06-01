@@ -114,6 +114,8 @@ dependencies {
     // FCM dependencies
     implementation platform('com.google.firebase:firebase-bom:32.7.3')
     implementation 'com.google.firebase:firebase-messaging-ktx'
+    // --- Added for location APIs ---
+    implementation 'com.google.android.gms:play-services-location:21.2.0'
 }
 
 apply plugin: 'com.google.gms.google-services'

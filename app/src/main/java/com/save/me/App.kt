@@ -6,5 +6,6 @@ class App : Application() {
     override fun onCreate() {
         super.onCreate()
         NotificationHelper.createChannel(this)
+        UploadManager.init(this)
     }
 }

