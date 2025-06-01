@@ -1,16 +1,40 @@
 package com.save.me
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.material3.*
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Edit
-import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.outlined.CheckCircle
 import androidx.compose.material.icons.outlined.Error
-import androidx.compose.runtime.*
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.SnackbarResult
+import androidx.compose.material3.Text
+import androidx.compose.material3.TopAppBar
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -18,21 +42,19 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
-import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun MainScreen(
     onSetupClick: (() -> Unit)? = null,
-    vm: MainViewModel = viewModel()
+    vm: MainViewModel = viewModel(),
+    realPermissions: List<PermissionStatus>
 ) {
     val snackbarHostState = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
 
-    // State from ViewModel
-    val permissions = vm.permissions
-    val nickname by vm.nickname
-    val botToken by vm.botToken
+    val nickname = vm.getCurrentNickname()
+    val botToken = vm.getCurrentBotToken()
     val serviceActive by vm.serviceActive
     val actionHistory = vm.actionHistory
     val actionInProgress by vm.actionInProgress
@@ -52,12 +74,7 @@ fun MainScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("Remote Device Control") },
-                actions = {
-                    IconButton(onClick = { vm.refreshPermissions() }) {
-                        Icon(Icons.Filled.Refresh, contentDescription = "Refresh permissions")
-                    }
-                }
+                title = { Text("FindMyDevice") },
             )
         },
         snackbarHost = { SnackbarHost(hostState = snackbarHostState) }
@@ -79,7 +96,7 @@ fun MainScreen(
                     modifier = Modifier.weight(1f)
                 )
                 IconButton(onClick = {
-                    vm.setNickname("Device " + (1..99).random())
+                    onSetupClick?.invoke()
                 }) {
                     Icon(Icons.Filled.Edit, contentDescription = "Edit Nickname")
                 }
@@ -89,11 +106,11 @@ fun MainScreen(
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Text(
-                    text = "Bot Token: ${botToken.take(8)}...",
+                    text = "Bot Token: ${if (botToken.length > 8) botToken.take(8) + "..." else botToken}",
                     modifier = Modifier.weight(1f)
                 )
                 IconButton(onClick = {
-                    vm.setBotToken("ABCDEFGH" + (1..999).random())
+                    onSetupClick?.invoke()
                 }) {
                     Icon(Icons.Filled.Edit, contentDescription = "Edit bot token")
                 }
@@ -122,15 +139,14 @@ fun MainScreen(
 
             Spacer(Modifier.height(20.dp))
 
-            // Permissions Status
+            // Permissions Status (REAL)
             Text("Permissions:")
             LazyColumn(
                 Modifier
                     .fillMaxWidth()
                     .heightIn(max = 140.dp)
             ) {
-                items(permissions.size) { idx ->
-                    val perm = permissions[idx]
+                items(realPermissions) { perm ->
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Icon(
                             if (perm.granted) Icons.Outlined.CheckCircle else Icons.Outlined.Error,
@@ -175,8 +191,7 @@ fun MainScreen(
                         .fillMaxWidth()
                         .heightIn(max = 180.dp)
                 ) {
-                    items(actionHistory.size) { idx ->
-                        val act = actionHistory[idx]
+                    items(actionHistory) { act ->
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
                             modifier = Modifier
@@ -184,22 +199,16 @@ fun MainScreen(
                                 .padding(vertical = 2.dp)
                         ) {
                             Icon(
-                                imageVector = when (act.type) {
-                                    "photo" -> Icons.Filled.Edit // Or a camera icon if you add it
-                                    "video" -> Icons.Filled.Refresh // Or a video icon if you add it
-                                    "audio" -> Icons.Outlined.CheckCircle // Or a mic icon if you add it
-                                    "location" -> Icons.Outlined.Error // Or a location icon if you add it
-                                    else -> Icons.Filled.Refresh
-                                },
+                                imageVector = Icons.Outlined.CheckCircle,
                                 contentDescription = null,
                                 modifier = Modifier.size(18.dp)
                             )
                             Spacer(Modifier.width(8.dp))
                             Text("${act.type.replaceFirstChar { it.uppercase() }} (${act.status})")
                             Spacer(Modifier.weight(1f))
-                            act.preview?.let {
+                            act.preview?.let { preview ->
                                 Text(
-                                    "Preview: $it",
+                                    "Preview: $preview",
                                     color = Color.Gray,
                                     fontSize = MaterialTheme.typography.bodySmall.fontSize
                                 )
@@ -211,11 +220,3 @@ fun MainScreen(
         }
     }
 }
-
-// Data class for action history
-data class RemoteAction(
-    val type: String,
-    val status: String, // pending, success, error
-    val timestamp: Long,
-    val preview: String? = null
-)

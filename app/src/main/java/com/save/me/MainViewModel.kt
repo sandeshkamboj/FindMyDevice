@@ -1,33 +1,16 @@
 package com.save.me
 
-import androidx.compose.runtime.*
-import androidx.lifecycle.ViewModel
+import android.app.Application
+import androidx.compose.runtime.State
+import androidx.compose.runtime.mutableStateListOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
-import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 
-// Permission status data class
 data class PermissionStatus(val name: String, val granted: Boolean)
 
-// MainViewModel handles UI state and actions for MainScreen
-class MainViewModel : ViewModel() {
-
-    // Permissions list (example permissions, adjust as needed)
-    private val _permissions = mutableStateListOf(
-        PermissionStatus("Camera", false),
-        PermissionStatus("Microphone", false),
-        PermissionStatus("Location", false),
-        PermissionStatus("Storage", false)
-    )
-    val permissions: List<PermissionStatus> get() = _permissions
-
-    // Device nickname
-    private val _nickname = mutableStateOf("My Device")
-    val nickname: State<String> get() = _nickname
-
-    // Bot token
-    private val _botToken = mutableStateOf("12345678:ABCDEFGH")
-    val botToken: State<String> get() = _botToken
+class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     // Service active state
     private val _serviceActive = mutableStateOf(false)
@@ -45,22 +28,12 @@ class MainViewModel : ViewModel() {
     private val _actionError = mutableStateOf<String?>(null)
     val actionError: State<String?> get() = _actionError
 
-    // Update the nickname
-    fun setNickname(newNickname: String) {
-        _nickname.value = newNickname
-    }
+    // Get current nickname and bot token from Preferences
+    fun getCurrentNickname(): String =
+        Preferences.getNickname(getApplication()) ?: "Device"
 
-    // Update the bot token
-    fun setBotToken(newToken: String) {
-        _botToken.value = newToken
-    }
-
-    // Simulate refreshing permissions (randomly grant/revoke for demo)
-    fun refreshPermissions() {
-        _permissions.forEachIndexed { idx, perm ->
-            _permissions[idx] = perm.copy(granted = (0..1).random() == 1)
-        }
-    }
+    fun getCurrentBotToken(): String =
+        Preferences.getBotToken(getApplication()) ?: "Not set"
 
     // Start a remote action, e.g., photo, video, audio, location
     fun startRemoteAction(type: String) {
@@ -74,7 +47,6 @@ class MainViewModel : ViewModel() {
 
         // Simulate async action and completion
         viewModelScope.launch {
-            // Simulate a delay and random result
             kotlinx.coroutines.delay(1200)
             val success = (0..1).random() == 1
             val completedAction = newAction.copy(

@@ -5,6 +5,7 @@ import android.app.Activity
 import android.app.AlertDialog
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.os.PowerManager
@@ -14,6 +15,7 @@ import androidx.core.content.ContextCompat
 
 object PermissionsAndOnboarding {
 
+    // List of dangerous permissions
     private val promptPermissions: Array<String>
         get() {
             val perms = mutableListOf<String>()
@@ -21,7 +23,6 @@ object PermissionsAndOnboarding {
             perms += Manifest.permission.RECORD_AUDIO
             perms += Manifest.permission.ACCESS_FINE_LOCATION
             perms += Manifest.permission.ACCESS_COARSE_LOCATION
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) perms += Manifest.permission.ACCESS_BACKGROUND_LOCATION
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                 perms += Manifest.permission.READ_MEDIA_IMAGES
                 perms += Manifest.permission.READ_MEDIA_VIDEO
@@ -41,83 +42,70 @@ object PermissionsAndOnboarding {
     private fun needsAllFiles(context: Context): Boolean {
         return Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && !android.os.Environment.isExternalStorageManager()
     }
-    private fun needsBackgroundLocation(context: Context) =
-        Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q &&
-                ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_BACKGROUND_LOCATION) != android.content.pm.PackageManager.PERMISSION_GRANTED
 
     fun hasAllPermissions(context: Context): Boolean {
         val permsGranted = promptPermissions.all {
-            ContextCompat.checkSelfPermission(context, it) == android.content.pm.PackageManager.PERMISSION_GRANTED
+            ContextCompat.checkSelfPermission(context, it) == PackageManager.PERMISSION_GRANTED
         }
         val specialsOk =
             !needsOverlay(context) &&
                     !needsBattery(context) &&
-                    !needsAllFiles(context) &&
-                    !needsBackgroundLocation(context)
+                    !needsAllFiles(context)
         return permsGranted && specialsOk
+    }
+
+    fun requestDangerousPermissions(activity: Activity, onDone: () -> Unit) {
+        // Only prompt for permissions not already granted
+        val toRequest = promptPermissions.filter {
+            ContextCompat.checkSelfPermission(activity, it) != PackageManager.PERMISSION_GRANTED
+        }
+        if (toRequest.isNotEmpty()) {
+            ActivityCompat.requestPermissions(activity, toRequest.toTypedArray(), 101)
+        } else {
+            onDone()
+        }
     }
 
     fun showPermissionsDialog(activity: Activity, onDone: () -> Unit) {
         val missing = mutableListOf<String>()
         if (!hasPromptPermissions(activity)) missing += "Camera, Mic, Location, Media"
-        if (needsOverlay(activity)) missing += "Overlay"
+        if (needsOverlay(activity)) missing += "Overlay (Display over other apps)"
         if (needsBattery(activity)) missing += "Ignore Battery Optimizations"
         if (needsAllFiles(activity)) missing += "All Files Access"
-        if (needsBackgroundLocation(activity)) missing += "Background Location"
 
         AlertDialog.Builder(activity)
-            .setTitle("Permissions Required")
-            .setMessage(
-                "The app needs the following permissions:\n\n" +
-                        missing.joinToString("\n") +
-                        "\n\nPlease grant them for best results."
-            )
-            .setPositiveButton("Grant") { _, _ ->
-                requestAllPermissions(activity, onDone)
+            .setTitle(activity.getString(R.string.permission_required))
+            .setMessage(activity.getString(R.string.permissions_needed, missing.joinToString("\n")))
+            .setCancelable(false)
+            .setPositiveButton(activity.getString(R.string.grant_permissions)) { _, _ ->
+                requestDangerousPermissions(activity, onDone)
+                // Special permissions are handled via system intents
+                if (needsOverlay(activity)) {
+                    val intent = Intent(
+                        Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                        Uri.parse("package:${activity.packageName}")
+                    )
+                    activity.startActivity(intent)
+                }
+                if (needsAllFiles(activity)) {
+                    val intent = Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION)
+                    intent.data = Uri.parse("package:${activity.packageName}")
+                    activity.startActivity(intent)
+                }
+                if (needsBattery(activity)) {
+                    val intent = Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)
+                    activity.startActivity(intent)
+                }
             }
-            .setNegativeButton("Cancel", null)
+            .setNegativeButton(activity.getString(R.string.exit)) { _, _ ->
+                activity.finish()
+            }
             .show()
     }
 
     private fun hasPromptPermissions(context: Context): Boolean {
         return promptPermissions.all {
-            ContextCompat.checkSelfPermission(context, it) == android.content.pm.PackageManager.PERMISSION_GRANTED
+            ContextCompat.checkSelfPermission(context, it) == PackageManager.PERMISSION_GRANTED
         }
-    }
-
-    private fun requestAllPermissions(activity: Activity, onDone: () -> Unit) {
-        // Prompt permissions
-        ActivityCompat.requestPermissions(activity, promptPermissions, 101)
-
-        // Overlay
-        if (needsOverlay(activity)) {
-            val intent = Intent(
-                Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
-                Uri.parse("package:${activity.packageName}")
-            )
-            activity.startActivity(intent)
-        }
-
-        // All Files
-        if (needsAllFiles(activity)) {
-            val intent = Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION)
-            intent.data = Uri.parse("package:${activity.packageName}")
-            activity.startActivity(intent)
-        }
-
-        // Battery
-        if (needsBattery(activity)) {
-            val intent = Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)
-            activity.startActivity(intent)
-        }
-
-        // Location Always
-        if (needsBackgroundLocation(activity)) {
-            val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS)
-            intent.data = Uri.parse("package:${activity.packageName}")
-            activity.startActivity(intent)
-        }
-
-        onDone()
     }
 }
