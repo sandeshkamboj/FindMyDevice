@@ -38,8 +38,9 @@ object PermissionsAndOnboarding {
         val pm = context.getSystemService(Context.POWER_SERVICE) as PowerManager
         return !pm.isIgnoringBatteryOptimizations(context.packageName)
     }
-    private fun needsAllFiles(context: Context) =
-        Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && !Settings.isExternalStorageManager()
+    private fun needsAllFiles(context: Context): Boolean {
+        return Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && !android.os.Environment.isExternalStorageManager()
+    }
     private fun needsBackgroundLocation(context: Context) =
         Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q &&
                 ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_BACKGROUND_LOCATION) != android.content.pm.PackageManager.PERMISSION_GRANTED

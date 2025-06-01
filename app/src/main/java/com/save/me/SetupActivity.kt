@@ -3,6 +3,8 @@ package com.save.me
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
 import com.save.me.ui.theme.AppTheme
 
 class SetupActivity : ComponentActivity() {
@@ -10,7 +12,12 @@ class SetupActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         setContent {
             AppTheme {
-                SetupScreen(onFinish = { finish() })
+                Surface(color = MaterialTheme.colorScheme.background) {
+                    // Use the correct parameter name matching SetupScreen's definition
+                    SetupScreen(
+                        onSetupComplete = { finish() }
+                    )
+                }
             }
         }
     }

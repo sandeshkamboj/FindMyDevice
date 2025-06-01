@@ -9,10 +9,8 @@ import kotlin.coroutines.resume
 object LocationBackgroundHelper {
     suspend fun getLastLocation(context: Context): Location? = suspendCancellableCoroutine { cont ->
         val fused = LocationServices.getFusedLocationProviderClient(context)
-        fused.lastLocation.addOnSuccessListener { loc ->
-            cont.resume(loc)
-        }.addOnFailureListener {
-            cont.resume(null)
-        }
+        fused.lastLocation
+            .addOnSuccessListener { loc: Location? -> cont.resume(loc) }
+            .addOnFailureListener { cont.resume(null) }
     }
 }

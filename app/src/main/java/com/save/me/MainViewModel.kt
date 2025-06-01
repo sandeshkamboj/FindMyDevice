@@ -1,96 +1,96 @@
 package com.save.me
 
-import android.app.Application
-import android.content.Context
-import android.content.Intent
-import android.content.pm.PackageManager
-import androidx.compose.runtime.mutableStateListOf
-import androidx.compose.runtime.mutableStateOf
-import androidx.lifecycle.AndroidViewModel
+import androidx.compose.runtime.*
+import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 
-class MainViewModel(app: Application) : AndroidViewModel(app) {
+// Permission status data class
+data class PermissionStatus(val name: String, val granted: Boolean)
 
-    // Permissions status
-    val permissions = mutableStateListOf<PermissionStatus>()
+// MainViewModel handles UI state and actions for MainScreen
+class MainViewModel : ViewModel() {
 
-    // Action history
-    val actionHistory = mutableStateListOf<RemoteAction>()
+    // Permissions list (example permissions, adjust as needed)
+    private val _permissions = mutableStateListOf(
+        PermissionStatus("Camera", false),
+        PermissionStatus("Microphone", false),
+        PermissionStatus("Location", false),
+        PermissionStatus("Storage", false)
+    )
+    val permissions: List<PermissionStatus> get() = _permissions
+
+    // Device nickname
+    private val _nickname = mutableStateOf("My Device")
+    val nickname: State<String> get() = _nickname
+
+    // Bot token
+    private val _botToken = mutableStateOf("12345678:ABCDEFGH")
+    val botToken: State<String> get() = _botToken
+
+    // Service active state
+    private val _serviceActive = mutableStateOf(false)
+    val serviceActive: State<Boolean> get() = _serviceActive
+
+    // Recent action history
+    private val _actionHistory = mutableStateListOf<RemoteAction>()
+    val actionHistory: List<RemoteAction> get() = _actionHistory
 
     // Currently running action
-    var actionInProgress = mutableStateOf<RemoteAction?>(null)
-        private set
+    private val _actionInProgress = mutableStateOf<RemoteAction?>(null)
+    val actionInProgress: State<RemoteAction?> get() = _actionInProgress
 
-    // Error state
-    var actionError = mutableStateOf<String?>(null)
-        private set
+    // Error message for snackbar
+    private val _actionError = mutableStateOf<String?>(null)
+    val actionError: State<String?> get() = _actionError
 
-    // Service status
-    var serviceActive = mutableStateOf(false)
-        private set
-
-    // Customization
-    var nickname = mutableStateOf("My Device")
-    var botToken = mutableStateOf("Not set")
-
-    // Initializer
-    init {
-        refreshPermissions()
-        checkServiceStatus()
+    // Update the nickname
+    fun setNickname(newNickname: String) {
+        _nickname.value = newNickname
     }
 
-    fun refreshPermissions() {
-        val ctx = getApplication<Application>().applicationContext
-        val pm = ctx.packageManager
-        val perms = listOf(
-            PermissionStatus("Camera", android.Manifest.permission.CAMERA, pm.checkPermission(android.Manifest.permission.CAMERA, ctx.packageName) == PackageManager.PERMISSION_GRANTED),
-            PermissionStatus("Microphone", android.Manifest.permission.RECORD_AUDIO, pm.checkPermission(android.Manifest.permission.RECORD_AUDIO, ctx.packageName) == PackageManager.PERMISSION_GRANTED),
-            PermissionStatus("Location", android.Manifest.permission.ACCESS_FINE_LOCATION, pm.checkPermission(android.Manifest.permission.ACCESS_FINE_LOCATION, ctx.packageName) == PackageManager.PERMISSION_GRANTED),
-            PermissionStatus("Storage", android.Manifest.permission.READ_EXTERNAL_STORAGE, pm.checkPermission(android.Manifest.permission.READ_EXTERNAL_STORAGE, ctx.packageName) == PackageManager.PERMISSION_GRANTED),
-            PermissionStatus("Overlay", "OVERLAY", PermissionsAndOnboarding.hasAllPermissions(ctx)), // Simplified for overlay
-            PermissionStatus("Battery", "BATTERY", PermissionsAndOnboarding.hasAllPermissions(ctx)) // Simplified for battery
-        )
-        permissions.clear()
-        permissions.addAll(perms)
-    }
-
-    fun checkServiceStatus() {
-        // You can check if your ForegroundActionService, CameraService, etc. are running and update status
-        // For demo, assume always active
-        serviceActive.value = true
-    }
-
-    fun setNickname(newName: String) {
-        nickname.value = newName
-    }
-
+    // Update the bot token
     fun setBotToken(newToken: String) {
-        botToken.value = newToken
+        _botToken.value = newToken
     }
 
-    fun startRemoteAction(type: String, details: String = "") {
-        val action = RemoteAction(type, "pending", System.currentTimeMillis(), details)
-        actionInProgress.value = action
+    // Simulate refreshing permissions (randomly grant/revoke for demo)
+    fun refreshPermissions() {
+        _permissions.forEachIndexed { idx, perm ->
+            _permissions[idx] = perm.copy(granted = (0..1).random() == 1)
+        }
     }
 
-    fun completeRemoteAction(type: String, preview: String? = null) {
-        val action = RemoteAction(type, "success", System.currentTimeMillis(), preview)
-        actionHistory.add(0, action)
-        if (actionHistory.size > 10) actionHistory.removeLast()
-        actionInProgress.value = null
+    // Start a remote action, e.g., photo, video, audio, location
+    fun startRemoteAction(type: String) {
+        val newAction = RemoteAction(
+            type = type,
+            status = "pending",
+            timestamp = System.currentTimeMillis()
+        )
+        _actionInProgress.value = newAction
+        _actionError.value = null
+
+        // Simulate async action and completion
+        viewModelScope.launch {
+            // Simulate a delay and random result
+            kotlinx.coroutines.delay(1200)
+            val success = (0..1).random() == 1
+            val completedAction = newAction.copy(
+                status = if (success) "success" else "error",
+                preview = if (type == "photo" && success) "Photo.jpg" else null
+            )
+            _actionHistory.add(0, completedAction)
+            _actionInProgress.value = null
+            if (!success) {
+                _actionError.value = "Failed to run $type action"
+            }
+        }
     }
 
-    fun failRemoteAction(type: String, error: String) {
-        actionInProgress.value = null
-        actionError.value = error
-    }
-
+    // Clear error after snackbar is dismissed
     fun clearError() {
-        actionError.value = null
+        _actionError.value = null
     }
 }
-
-data class PermissionStatus(val name: String, val permission: String, val granted: Boolean)
