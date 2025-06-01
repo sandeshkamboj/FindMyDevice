@@ -20,11 +20,11 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.Alignment
-import androidx.compose.ui.Modifier
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.save.me.ui.theme.AppTheme
 
+// Suppress the warning for experimental Material3 API usage
+@OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
 class MainActivity : ComponentActivity() {
 
     private var permissionsUiRefresh by mutableStateOf(0)
@@ -151,16 +151,25 @@ fun PermissionRequestScreen(
     val needsOverlay = PermissionsAndOnboarding.needsOverlay(activity)
     val needsAllFiles = PermissionsAndOnboarding.needsAllFiles(activity)
     val needsBattery = PermissionsAndOnboarding.needsBattery(activity)
+    val needsBgLocation = !PermissionsAndOnboarding.hasBackgroundLocation(activity)
 
     var standardPrompted by remember { mutableStateOf(false) }
     var overlayPrompted by remember { mutableStateOf(false) }
     var allFilesPrompted by remember { mutableStateOf(false) }
     var batteryPrompted by remember { mutableStateOf(false) }
+    var bgLocationPrompted by remember { mutableStateOf(false) }
 
     if (missingStandard.isNotEmpty() && !standardPrompted) {
         LaunchedEffect(Unit) {
             standardPrompted = true
             requestStandardPermissions(missingStandard) { }
+        }
+    } else if (needsBgLocation && !bgLocationPrompted) {
+        LaunchedEffect(Unit) {
+            bgLocationPrompted = true
+            val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS)
+            intent.data = Uri.parse("package:${activity.packageName}")
+            activity.startActivity(intent)
         }
     } else if (needsOverlay && !overlayPrompted) {
         LaunchedEffect(Unit) {
@@ -177,16 +186,22 @@ fun PermissionRequestScreen(
             batteryPrompted = true
             requestBatteryPermission()
         }
-    } else if (missingStandard.isEmpty() && !needsOverlay && !needsAllFiles && !needsBattery) {
+    } else if (
+        missingStandard.isEmpty() &&
+        !needsBgLocation &&
+        !needsOverlay &&
+        !needsAllFiles &&
+        !needsBattery
+    ) {
         LaunchedEffect(Unit) {
             onAllGranted()
         }
     }
 
-    Surface(modifier = Modifier.fillMaxSize()) {
+    Surface(modifier = androidx.compose.ui.Modifier.fillMaxSize()) {
         Box(
-            contentAlignment = Alignment.Center,
-            modifier = Modifier.fillMaxSize()
+            contentAlignment = androidx.compose.ui.Alignment.Center,
+            modifier = androidx.compose.ui.Modifier.fillMaxSize()
         ) {
             Text(
                 "Please grant all required permissions to continue.\n\nIf you are stuck, grant permissions manually from settings.",
