@@ -1,17 +1,40 @@
 package com.save.me
 
 import android.content.Context
-import org.json.JSONObject
+import android.util.Log
 
 object ActionHandlers {
-    fun dispatch(context: Context, type: String, options: JSONObject) {
+    fun dispatch(
+        context: Context,
+        type: String,
+        camera: String?,
+        flash: String?,
+        quality: String?
+    ) {
         when (type) {
-            "capturePhoto" -> ForegroundActionService.startCameraAction(context, "photo", options)
-            "recordVideo" -> ForegroundActionService.startCameraAction(context, "video", options)
-            "recordAudio" -> ForegroundActionService.startAudioAction(context, options)
-            "getLocation" -> ForegroundActionService.startLocationAction(context)
-            "ring" -> ForegroundActionService.startRingAction(context, options)
-            "vibrate" -> ForegroundActionService.startVibrateAction(context, options)
+            "photo" -> {
+                val cam = camera ?: CameraService.REAR_CAMERA
+                val fl = flash == "on"
+                CameraService.start(context, cam, CameraService.PHOTO, fl, null)
+            }
+            "video" -> {
+                val cam = camera ?: CameraService.REAR_CAMERA
+                val fl = flash == "on"
+                val videoQuality = when (quality) {
+                    "1080p" -> CameraService.QUALITY_1080P
+                    "720p" -> CameraService.QUALITY_720P
+                    "420p" -> CameraService.QUALITY_420P
+                    else -> CameraService.QUALITY_720P
+                }
+                CameraService.start(context, cam, CameraService.VIDEO, fl, videoQuality)
+            }
+            "location" -> {
+                LocationService.start(context)
+            }
+            "audio" -> {
+                AudioService.start(context)
+            }
+            else -> Log.e("ActionHandlers", "Unknown action type: $type")
         }
     }
 }

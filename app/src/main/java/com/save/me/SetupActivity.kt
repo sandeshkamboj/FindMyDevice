@@ -1,21 +1,16 @@
 package com.save.me
 
-import android.content.Intent
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import com.save.me.ui.theme.AppTheme
 
-class MainActivity : ComponentActivity() {
+class SetupActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContent {
             AppTheme {
-                MainScreen(
-                    onSetupClick = {
-                        startActivity(Intent(this, SetupActivity::class.java))
-                    }
-                )
+                SetupScreen(onFinish = { finish() })
             }
         }
     }

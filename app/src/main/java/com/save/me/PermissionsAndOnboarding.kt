@@ -42,7 +42,7 @@ object PermissionsAndOnboarding {
         Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && !Settings.isExternalStorageManager()
     private fun needsBackgroundLocation(context: Context) =
         Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q &&
-        ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_BACKGROUND_LOCATION) != android.content.pm.PackageManager.PERMISSION_GRANTED
+                ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_BACKGROUND_LOCATION) != android.content.pm.PackageManager.PERMISSION_GRANTED
 
     fun hasAllPermissions(context: Context): Boolean {
         val permsGranted = promptPermissions.all {
@@ -50,9 +50,9 @@ object PermissionsAndOnboarding {
         }
         val specialsOk =
             !needsOverlay(context) &&
-            !needsBattery(context) &&
-            !needsAllFiles(context) &&
-            !needsBackgroundLocation(context)
+                    !needsBattery(context) &&
+                    !needsAllFiles(context) &&
+                    !needsBackgroundLocation(context)
         return permsGranted && specialsOk
     }
 

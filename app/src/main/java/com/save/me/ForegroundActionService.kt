@@ -8,8 +8,6 @@ import android.media.RingtoneManager
 import android.os.*
 import android.util.Log
 import androidx.core.app.NotificationCompat
-import io.github.jan.supabase.storage.storage
-import kotlinx.coroutines.*
 import org.json.JSONObject
 import java.io.File
 import java.io.FileOutputStream
@@ -46,7 +44,6 @@ class ForegroundActionService : Service() {
                 }
             } catch (e: Exception) {
                 Log.e("ForegroundActionService", "Error in action $action", e)
-                uploadLogFile("error", "action_${action}_error_${nowString()}.txt", e.stackTraceToString())
             } finally {
                 removeCameraOverlay()
             }
@@ -75,16 +72,11 @@ class ForegroundActionService : Service() {
             )
         } catch (e: Exception) {
             Log.e("ForegroundActionService", "Camera error: $e")
-            uploadLogFile("error", "camera_${type}_error_${nowString()}.txt", e.stackTraceToString())
             return
         } finally {
             removeCameraOverlay()
         }
-        if (result) {
-            uploadFileToSupabase("media", outputFile)
-        } else {
-            uploadLogFile("error", "camera_${type}_fail_${nowString()}.txt", "Unknown error")
-        }
+        // TODO: Handle file upload to your own backend or Telegram bot if needed
     }
 
     private suspend fun handleAudioRecording(intent: Intent?) {
@@ -92,10 +84,9 @@ class ForegroundActionService : Service() {
         val outputFile = File(cacheDir, "audio_${nowString()}.m4a")
         try {
             AudioBackgroundHelper.recordAudio(this, outputFile, duration)
-            uploadFileToSupabase("audio", outputFile)
+            // TODO: Handle file upload if needed
         } catch (e: Exception) {
             Log.e("ForegroundActionService", "Audio error: $e")
-            uploadLogFile("error", "audio_error_${nowString()}.txt", e.stackTraceToString())
         }
     }
 
@@ -103,17 +94,16 @@ class ForegroundActionService : Service() {
         try {
             val loc = LocationBackgroundHelper.getLastLocation(this)
             if (loc == null) {
-                uploadLogFile("error", "location_fail_${nowString()}.txt", "Location unavailable")
+                Log.e("ForegroundActionService", "Location unavailable")
                 return
             }
             val locationFile = File(cacheDir, "location_${nowString()}.json")
             FileOutputStream(locationFile).use { out ->
                 out.write("""{"lat":${loc.latitude},"lng":${loc.longitude},"timestamp":${loc.time}}""".toByteArray())
             }
-            uploadFileToSupabase("location", locationFile)
+            // TODO: Handle location file upload if needed
         } catch (e: Exception) {
             Log.e("ForegroundActionService", "Location error: $e")
-            uploadLogFile("error", "location_error_${nowString()}.txt", e.stackTraceToString())
         }
     }
 
@@ -131,7 +121,7 @@ class ForegroundActionService : Service() {
                 audioManager.setStreamVolume(AudioManager.STREAM_RING, oldVolume, 0)
             }, (duration * 1000).toLong())
         } catch (e: Exception) {
-            uploadLogFile("error", "ring_error_${nowString()}.txt", e.stackTraceToString())
+            Log.e("ForegroundActionService", "Ring error: $e")
         }
     }
 
@@ -154,34 +144,7 @@ class ForegroundActionService : Service() {
                 }
             }
         } catch (e: Exception) {
-            uploadLogFile("error", "vibrate_error_${nowString()}.txt", e.stackTraceToString())
-        }
-    }
-
-    private fun uploadFileToSupabase(bucket: String, file: File) {
-        try {
-            val supabase = SupabaseRemoteControl.getClient()
-            runBlocking {
-                val path = "${file.name}"
-                val response = supabase.storage.from(bucket).upload(path, file.readBytes(), upsert = true)
-                Log.i("ForegroundActionService", "Uploaded ${file.name} to $bucket: $response")
-            }
-        } catch (e: Exception) {
-            Log.e("ForegroundActionService", "Upload failed: $e")
-            uploadLogFile("error", "upload_error_${nowString()}.txt", e.stackTraceToString())
-        }
-    }
-
-    private fun uploadLogFile(bucket: String, filename: String, message: String) {
-        try {
-            val logFile = File(cacheDir, filename)
-            logFile.writeText(message)
-            val supabase = SupabaseRemoteControl.getClient()
-            runBlocking {
-                supabase.storage.from(bucket).upload(logFile.name, logFile.readBytes(), upsert = true)
-            }
-        } catch (e: Exception) {
-            Log.e("ForegroundActionService", "Failed to upload log file: $filename, $e")
+            Log.e("ForegroundActionService", "Vibrate error: $e")
         }
     }
 
