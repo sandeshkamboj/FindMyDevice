@@ -3,12 +3,11 @@ plugins {
     id 'org.jetbrains.kotlin.android'
     id 'org.jetbrains.kotlin.kapt'
     id 'kotlin-parcelize'
-    id 'org.jetbrains.kotlin.plugin.compose'
-    id 'org.jlleitschuh.gradle.ktlint' version '12.1.0'
+    id 'org.jlleitschuh.gradle.ktlint'
 }
 
 android {
-    namespace = 'com.save.me'
+    namespace = "com.save.me"
     compileSdk = 34
 
     defaultConfig {
@@ -56,7 +55,7 @@ android {
         compose = true
     }
     composeOptions {
-        kotlinCompilerExtensionVersion = '1.6.10'
+        kotlinCompilerExtensionVersion = '1.5.11'
     }
     packagingOptions {
         resources {
@@ -99,16 +98,16 @@ dependencies {
     debugImplementation 'androidx.compose.ui:ui-test-manifest'
     debugImplementation 'com.squareup.leakcanary:leakcanary-android:2.12'
     implementation 'androidx.viewpager2:viewpager2:1.1.0-beta02'
-    implementation 'org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1'
-    implementation 'org.jetbrains.kotlinx:kotlinx-coroutines-core:1.8.1'
+    // === CORRECT COROUTINES DEPENDENCIES ===
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.8.1")
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
+    // =======================================
     implementation 'io.coil-kt:coil-compose:2.6.0'
     implementation 'androidx.lifecycle:lifecycle-viewmodel-compose:2.7.0'
     implementation 'androidx.lifecycle:lifecycle-viewmodel-ktx:2.7.0'
     implementation 'androidx.navigation:navigation-compose:2.7.7'
     implementation 'com.squareup.retrofit2:retrofit:2.11.0'
     implementation 'com.squareup.retrofit2:converter-gson:2.11.0'
-    // If you use jackson, ensure the version is compatible with Java 8 as discussed previously.
-    // implementation 'com.squareup.retrofit2:converter-jackson:2.11.0'
     implementation 'com.squareup.okhttp3:okhttp:4.12.0'
     implementation 'androidx.room:room-runtime:2.6.1'
     implementation 'androidx.room:room-ktx:2.6.1'
@@ -124,6 +123,9 @@ dependencies {
     // FCM dependencies
     implementation platform('com.google.firebase:firebase-bom:32.7.3')
     implementation 'com.google.firebase:firebase-messaging-ktx'
+
+    // Play Services Location, if you use location APIs elsewhere
+    implementation 'com.google.android.gms:play-services-location:21.1.0'
 }
 
 apply plugin: 'com.google.gms.google-services'

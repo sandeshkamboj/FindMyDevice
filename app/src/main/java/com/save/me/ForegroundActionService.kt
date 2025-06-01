@@ -1,18 +1,31 @@
 package com.save.me
 
+// === COROUTINE IMPORTS (FIX) ===
 import android.app.Service
 import android.content.Context
 import android.content.Intent
 import android.media.AudioManager
 import android.media.RingtoneManager
-import android.os.*
+import android.os.Build
+import android.os.Handler
+import android.os.IBinder
+import android.os.Looper
+import android.os.VibrationEffect
+import android.os.Vibrator
 import android.util.Log
 import androidx.core.app.NotificationCompat
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.launch
 import org.json.JSONObject
 import java.io.File
 import java.io.FileOutputStream
 import java.text.SimpleDateFormat
-import java.util.*
+import java.util.Date
+import java.util.Locale
+
+// ===============================
 
 class ForegroundActionService : Service() {
     private var overlayView: OverlayCameraView? = null
