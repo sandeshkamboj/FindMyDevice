@@ -34,7 +34,7 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        // --- FIX START: Subscribe to FCM topic "all" and log FCM token for debugging ---
+        // Subscribe to FCM topic "all" and log FCM token for debugging
         FirebaseMessaging.getInstance().subscribeToTopic("all")
             .addOnCompleteListener { task ->
                 if (task.isSuccessful) {
@@ -51,7 +51,6 @@ class MainActivity : ComponentActivity() {
                 Log.e("FCM", "Failed to get FCM token", task.exception)
             }
         }
-        // --- FIX END ---
 
         showSetup = shouldShowSetup(this)
         setContent {

