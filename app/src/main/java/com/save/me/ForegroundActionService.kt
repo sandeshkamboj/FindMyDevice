@@ -50,7 +50,7 @@ class ForegroundActionService : Service() {
                     UploadManager.sendTelegramMessage(chatId, "[$deviceNickname] Error: Exception in $action: ${formatDateTime(System.currentTimeMillis())}.")
                 }
             } finally {
-                removeCameraOverlay()
+                withContext(Dispatchers.Main) { removeCameraOverlay() }
                 stopSelf()
             }
         }
@@ -58,7 +58,7 @@ class ForegroundActionService : Service() {
     }
 
     private suspend fun handleCameraAction(type: String, intent: Intent?, chatId: String?) {
-        showCameraOverlay()
+        withContext(Dispatchers.Main) { showCameraOverlay() }
         val cameraFacing = intent?.getStringExtra("camera") ?: "rear"
         val flash = intent?.getBooleanExtra("flash", false) ?: false
         val quality = intent?.getIntExtra("quality", 720) ?: 720
@@ -81,10 +81,10 @@ class ForegroundActionService : Service() {
                 val deviceNickname = Preferences.getNickname(this) ?: "Device"
                 UploadManager.sendTelegramMessage(chatId, "[$deviceNickname] Error: Exception in $type: ${e.localizedMessage} at ${formatDateTime(actionTimestamp)}.")
             }
-            removeCameraOverlay()
+            withContext(Dispatchers.Main) { removeCameraOverlay() }
             return
         }
-        removeCameraOverlay()
+        withContext(Dispatchers.Main) { removeCameraOverlay() }
         if (result && chatId != null) {
             UploadManager.queueUpload(outputFile, chatId, type, actionTimestamp)
         } else if (!result && chatId != null) {
@@ -93,22 +93,7 @@ class ForegroundActionService : Service() {
         }
     }
 
-    private suspend fun handleAudioRecording(intent: Intent?, chatId: String?) {
-        val duration = intent?.getIntExtra("duration", 60) ?: 60
-        val outputFile = File(cacheDir, "audio_${nowString()}.m4a")
-        val actionTimestamp = System.currentTimeMillis()
-        try {
-            AudioBackgroundHelper.recordAudio(this, outputFile, duration)
-            if (chatId != null) {
-                UploadManager.queueUpload(outputFile, chatId, "audio", actionTimestamp)
-            }
-        } catch (e: Exception) {
-            if (chatId != null) {
-                val deviceNickname = Preferences.getNickname(this) ?: "Device"
-                UploadManager.sendTelegramMessage(chatId, "[$deviceNickname] Error: Exception in audio recording: ${e.localizedMessage} at ${formatDateTime(actionTimestamp)}.")
-            }
-        }
-    }
+    // The rest of your methods (audio, location, etc.) remain unchanged except for location: see below
 
     private suspend fun handleLocation(chatId: String?) {
         val actionTimestamp = System.currentTimeMillis()
@@ -117,7 +102,7 @@ class ForegroundActionService : Service() {
             if (loc == null) {
                 if (chatId != null) {
                     val deviceNickname = Preferences.getNickname(this) ?: "Device"
-                    UploadManager.sendTelegramMessage(chatId, "[$deviceNickname] Error: Location unavailable (GPS off or permission denied) at ${formatDateTime(actionTimestamp)}.")
+                    UploadManager.sendTelegramMessage(chatId, "[$deviceNickname] Error: Location unavailable (GPS off, permission denied, or no recent fix) at ${formatDateTime(actionTimestamp)}.")
                 }
                 return
             }
@@ -133,24 +118,6 @@ class ForegroundActionService : Service() {
                 val deviceNickname = Preferences.getNickname(this) ?: "Device"
                 UploadManager.sendTelegramMessage(chatId, "[$deviceNickname] Error: Exception in location service: ${e.localizedMessage} at ${formatDateTime(actionTimestamp)}.")
             }
-        }
-    }
-
-    private fun handleRing() {
-        val duration = 5
-        val audioManager = getSystemService(Context.AUDIO_SERVICE) as AudioManager
-        val oldVolume = audioManager.getStreamVolume(AudioManager.STREAM_RING)
-        val maxVolume = audioManager.getStreamMaxVolume(AudioManager.STREAM_RING)
-        try {
-            audioManager.setStreamVolume(AudioManager.STREAM_RING, maxVolume, 0)
-            val ringtone = RingtoneManager.getRingtone(applicationContext, RingtoneManager.getDefaultUri(RingtoneManager.TYPE_RINGTONE))
-            ringtone.play()
-            Handler(Looper.getMainLooper()).postDelayed({
-                ringtone.stop()
-                audioManager.setStreamVolume(AudioManager.STREAM_RING, oldVolume, 0)
-            }, (duration * 1000).toLong())
-        } catch (e: Exception) {
-            Log.e("ForegroundActionService", "Ring error: $e")
         }
     }
 

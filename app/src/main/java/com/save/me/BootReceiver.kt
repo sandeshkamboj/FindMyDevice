@@ -5,10 +5,8 @@ import android.content.Context
 import android.content.Intent
 import android.os.Build
 import android.util.Log
+import com.save.me.ForegroundActionService
 
-/**
- * BootReceiver: Starts the ForegroundActionService automatically on boot (G).
- */
 class BootReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         if (intent.action == Intent.ACTION_BOOT_COMPLETED) {

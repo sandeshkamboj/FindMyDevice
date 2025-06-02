@@ -7,6 +7,7 @@ import androidx.compose.runtime.*
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.launch
+import com.save.me.ForegroundActionService
 
 class MainViewModel(app: Application) : AndroidViewModel(app) {
 
