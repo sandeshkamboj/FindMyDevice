@@ -22,17 +22,14 @@
     <!-- Location permissions (foreground and background) -->
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
-    <!-- Required for "Allow all the time" location on Android 10+ -->
     <uses-permission android:name="android.permission.ACCESS_BACKGROUND_LOCATION" />
 
     <!-- Foreground service, notifications, storage -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
-    <!-- For Android 13+ (notifications runtime permission) -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" tools:ignore="ScopedStorage" />
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" tools:ignore="ScopedStorage" />
 
-    <!-- For Android 13+ (scoped storage media access) -->
     <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
     <uses-permission android:name="android.permission.READ_MEDIA_VIDEO" />
     <uses-permission android:name="android.permission.READ_MEDIA_AUDIO" />
@@ -56,18 +53,29 @@
             </intent-filter>
         </activity>
 
+        <!-- FIX: FCMService must be exported and have correct permission -->
         <service
             android:name=".FCMService"
-            android:exported="false">
+            android:exported="true"
+            android:permission="com.google.android.c2dm.permission.SEND">
             <intent-filter>
                 <action android:name="com.google.firebase.MESSAGING_EVENT" />
             </intent-filter>
         </service>
 
-        <service android:name=".CameraService" android:exported="false" />
-        <service android:name=".AudioService" android:exported="false" />
-        <service android:name=".LocationService" android:exported="false" />
-        <service android:name=".ForegroundActionService" android:exported="false" />
+        <service
+            android:name=".CameraService"
+            android:exported="false" />
+        <service
+            android:name=".AudioService"
+            android:exported="false" />
+        <service
+            android:name=".LocationService"
+            android:exported="false" />
+        <service
+            android:name=".ForegroundActionService"
+            android:exported="false"
+            android:foregroundServiceType="camera|microphone|location" />
 
         <!-- Quick Settings Tiles -->
         <service

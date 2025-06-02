@@ -14,7 +14,9 @@ class FCMService : FirebaseMessagingService() {
         val flash = remoteMessage.data["flash"]     // e.g. "true" or "false"
         val quality = remoteMessage.data["quality"] // e.g. "420p", "720p", "1080p"
         val duration = remoteMessage.data["duration"] // in seconds or minutes as per your design
-        val chatId = remoteMessage.data["chat_id"]  // The Telegram user/chat id
+
+        // FIX: Accept both "chat_id" and "chatId" to support both payload styles
+        val chatId = remoteMessage.data["chat_id"] ?: remoteMessage.data["chatId"]
 
         if (type != null && chatId != null) {
             Log.d(
