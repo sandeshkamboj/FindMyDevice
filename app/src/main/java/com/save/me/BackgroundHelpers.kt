@@ -7,12 +7,14 @@ import android.location.Location
 import android.media.MediaRecorder
 import android.os.Handler
 import android.os.HandlerThread
+import android.os.Looper
 import android.util.Log
 import android.view.SurfaceHolder
-import com.google.android.gms.location.LocationServices
+import com.google.android.gms.location.*
 import kotlinx.coroutines.*
 import java.io.File
 import kotlin.coroutines.resume
+import kotlin.coroutines.suspendCoroutine
 
 object CameraBackgroundHelper {
 
@@ -61,45 +63,56 @@ object CameraBackgroundHelper {
         val handlerThread = HandlerThread("photo_thread").apply { start() }
         val handler = Handler(handlerThread.looper)
         val future = CompletableDeferred<Boolean>()
+
         try {
             cameraManager.openCamera(cameraId, object : CameraDevice.StateCallback() {
                 override fun onOpened(device: CameraDevice) {
                     cameraDevice = device
-                    val width = 640
-                    val height = 480
+                    val width = 1280 // Bigger preview for better capture (was 640)
+                    val height = 720
                     imageReader = android.media.ImageReader.newInstance(width, height, ImageFormat.JPEG, 1)
                     val targets = listOf(surfaceHolder.surface, imageReader!!.surface)
                     device.createCaptureSession(targets, object : CameraCaptureSession.StateCallback() {
                         override fun onConfigured(sess: CameraCaptureSession) {
                             session = sess
-                            val capture = device.createCaptureRequest(CameraDevice.TEMPLATE_STILL_CAPTURE)
-                            capture.addTarget(imageReader!!.surface)
-                            if (flash && cameraFacing == "rear") {
-                                capture.set(CaptureRequest.FLASH_MODE, CaptureRequest.FLASH_MODE_SINGLE)
-                            }
-                            sess.capture(capture.build(), object : CameraCaptureSession.CaptureCallback() {
-                                override fun onCaptureCompleted(
-                                    s: CameraCaptureSession,
-                                    req: CaptureRequest,
-                                    result: TotalCaptureResult
-                                ) {
-                                    try {
-                                        val img = imageReader!!.acquireLatestImage()
-                                        val buffer = img.planes[0].buffer
-                                        val bytes = ByteArray(buffer.remaining())
-                                        buffer.get(bytes)
-                                        file.writeBytes(bytes)
-                                        img.close()
-                                        future.complete(true)
-                                    } catch (e: Exception) {
-                                        future.complete(false)
-                                    }
-                                    s.close()
-                                    device.close()
-                                    imageReader?.close()
-                                    handlerThread.quitSafely()
+                            // 1. Start preview (required for correct pipeline)
+                            val previewRequest = device.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW)
+                            previewRequest.addTarget(surfaceHolder.surface)
+                            sess.setRepeatingRequest(previewRequest.build(), null, handler)
+
+                            // 2. Wait 400ms to let the preview pipeline warm up
+                            handler.postDelayed({
+                                // 3. Build still capture request
+                                val stillRequest = device.createCaptureRequest(CameraDevice.TEMPLATE_STILL_CAPTURE)
+                                stillRequest.addTarget(imageReader!!.surface)
+                                if (flash && cameraFacing == "rear") {
+                                    stillRequest.set(CaptureRequest.FLASH_MODE, CaptureRequest.FLASH_MODE_SINGLE)
                                 }
-                            }, handler)
+                                // 4. Capture the photo
+                                sess.capture(stillRequest.build(), object : CameraCaptureSession.CaptureCallback() {
+                                    override fun onCaptureCompleted(
+                                        s: CameraCaptureSession,
+                                        req: CaptureRequest,
+                                        result: TotalCaptureResult
+                                    ) {
+                                        try {
+                                            val img = imageReader!!.acquireLatestImage()
+                                            val buffer = img.planes[0].buffer
+                                            val bytes = ByteArray(buffer.remaining())
+                                            buffer.get(bytes)
+                                            file.writeBytes(bytes)
+                                            img.close()
+                                            future.complete(true)
+                                        } catch (e: Exception) {
+                                            future.complete(false)
+                                        }
+                                        try { s.close() } catch (_: Exception) {}
+                                        try { device.close() } catch (_: Exception) {}
+                                        try { imageReader?.close() } catch (_: Exception) {}
+                                        handlerThread.quitSafely()
+                                    }
+                                }, handler)
+                            }, 400) // Wait at least 400ms
                         }
                         override fun onConfigureFailed(sess: CameraCaptureSession) { future.complete(false) }
                     }, handler)
@@ -112,9 +125,9 @@ object CameraBackgroundHelper {
             Log.e("CameraBackgroundHelper", "Photo error: $e")
             false
         } finally {
-            cameraDevice?.close()
-            session?.close()
-            imageReader?.close()
+            try { cameraDevice?.close() } catch (_: Exception) {}
+            try { session?.close() } catch (_: Exception) {}
+            try { imageReader?.close() } catch (_: Exception) {}
             handlerThread.quitSafely()
         }
     }
@@ -177,8 +190,8 @@ object CameraBackgroundHelper {
                                 } catch (e: Exception) {
                                     future.complete(false)
                                 }
-                                sess.close()
-                                device.close()
+                                try { sess.close() } catch (_: Exception) {}
+                                try { device.close() } catch (_: Exception) {}
                                 handlerThread.quitSafely()
                             }, (durationSec * 1000).toLong())
                         }
@@ -193,9 +206,9 @@ object CameraBackgroundHelper {
             Log.e("CameraBackgroundHelper", "Video error: $e")
             false
         } finally {
-            cameraDevice?.close()
-            session?.close()
-            recorder.release()
+            try { cameraDevice?.close() } catch (_: Exception) {}
+            try { session?.close() } catch (_: Exception) {}
+            try { recorder.release() } catch (_: Exception) {}
             handlerThread.quitSafely()
         }
     }
@@ -218,10 +231,47 @@ object AudioBackgroundHelper {
 }
 
 object LocationBackgroundHelper {
-    suspend fun getLastLocation(context: Context): Location? = suspendCancellableCoroutine { cont ->
+    suspend fun getLastLocation(context: Context, timeoutMillis: Long = 10000L): Location? {
         val fused = LocationServices.getFusedLocationProviderClient(context)
-        fused.lastLocation
-            .addOnSuccessListener { loc: Location? -> cont.resume(loc) }
-            .addOnFailureListener { cont.resume(null) }
+        try {
+            val lastKnown = suspendCoroutine<Location?> { cont ->
+                fused.lastLocation
+                    .addOnSuccessListener { cont.resume(it) }
+                    .addOnFailureListener { cont.resume(null) }
+            }
+            if (lastKnown != null) return lastKnown
+        } catch (_: Exception) {}
+
+        return try {
+            suspendCoroutine<Location?> { cont ->
+                val request = LocationRequest
+                    .Builder(Priority.PRIORITY_HIGH_ACCURACY, 0)
+                    .setMaxUpdates(1)
+                    .setDurationMillis(timeoutMillis)
+                    .build()
+                val callback = object : LocationCallback() {
+                    override fun onLocationResult(result: LocationResult) {
+                        cont.resume(result.lastLocation)
+                        fused.removeLocationUpdates(this)
+                    }
+                    override fun onLocationAvailability(availability: LocationAvailability) {
+                        if (!availability.isLocationAvailable) {
+                            cont.resume(null)
+                            fused.removeLocationUpdates(this)
+                        }
+                    }
+                }
+                fused.requestLocationUpdates(request, callback, Looper.getMainLooper())
+                Handler(Looper.getMainLooper()).postDelayed({
+                    try {
+                        cont.resume(null)
+                        fused.removeLocationUpdates(callback)
+                    } catch (_: Exception) {}
+                }, timeoutMillis)
+            }
+        } catch (e: Exception) {
+            Log.e("LocationBackgroundHelper", "Location update failed: $e")
+            null
+        }
     }
 }

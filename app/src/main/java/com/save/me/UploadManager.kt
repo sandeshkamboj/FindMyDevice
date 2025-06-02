@@ -29,11 +29,14 @@ interface PendingUploadDao {
     @Query("SELECT * FROM pending_uploads ORDER BY actionTimestamp ASC")
     suspend fun getAll(): List<PendingUpload>
 
-    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
     suspend fun insert(upload: PendingUpload): Long
 
     @Delete
     suspend fun delete(upload: PendingUpload)
+
+    @Query("DELETE FROM pending_uploads WHERE filePath = :filePath")
+    suspend fun deleteByFilePath(filePath: String)
 }
 
 @Database(entities = [PendingUpload::class], version = 1)
@@ -84,10 +87,16 @@ object UploadManager {
     }
 
     /**
-     * Queue a file for upload. actionTimestamp is when the file was actually recorded/captured.
+     * Queue a file for upload. Prevent duplicate uploads for the same file.
      */
     fun queueUpload(file: File, chatId: String, type: String, actionTimestamp: Long = System.currentTimeMillis()) {
         scope.launch {
+            // Prevent duplicate entry: check if a pending upload for this file already exists
+            val uploads = dao.getAll()
+            if (uploads.any { it.filePath == file.absolutePath }) {
+                Log.d("UploadManager", "File already in pending uploads, skipping duplicate: ${file.absolutePath}")
+                return@launch
+            }
             val upload = PendingUpload(
                 filePath = file.absolutePath,
                 chatId = chatId,
@@ -133,7 +142,10 @@ object UploadManager {
                 false
             }
             if (success) {
-                file.delete()
+                // After successful upload, delete file and DB entry
+                if (file.exists()) {
+                    file.delete()
+                }
                 dao.delete(upload)
                 showNotification("Upload Success", "${upload.type.capitalize()} uploaded: ${file.name}")
             } else {

