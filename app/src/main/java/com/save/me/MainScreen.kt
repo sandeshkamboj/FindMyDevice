@@ -10,6 +10,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.outlined.CheckCircle
+import androidx.compose.material.icons.outlined.Error
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -26,6 +27,7 @@ import kotlinx.coroutines.tasks.await
 import kotlinx.coroutines.withContext
 import java.net.HttpURLConnection
 import java.net.URL
+import com.save.me.formatDateTime
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -37,7 +39,6 @@ fun MainScreen(
     val snackbarHostState = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
 
-    // Destructure Compose states with 'by', so use them directly (without .value)
     val nickname = vm.getCurrentNickname()
     val botToken = vm.getCurrentBotToken()
     val serviceActive by vm.serviceActive
@@ -45,7 +46,6 @@ fun MainScreen(
     val actionInProgress by vm.actionInProgress
     val actionError by vm.actionError
 
-    // FCM and Telegram status states (local mutable state)
     var fcmStatus by remember { mutableStateOf(false) }
     var fcmStatusMessage by remember { mutableStateOf<String?>(null) }
     var telegramStatus by remember { mutableStateOf(false) }
@@ -213,7 +213,7 @@ fun MainScreen(
                 Spacer(Modifier.height(20.dp))
             }
 
-            // Recent actions
+            // Recent actions - now with error reporting and preview
             Text("Recent Remote Actions:", fontWeight = FontWeight.SemiBold)
             if (actionHistory.isEmpty()) {
                 Text("No actions yet.", color = Color.Gray)
@@ -230,14 +230,28 @@ fun MainScreen(
                                 .fillMaxWidth()
                                 .padding(vertical = 2.dp)
                         ) {
-                            Icon(
-                                imageVector = Icons.Outlined.CheckCircle,
-                                contentDescription = null,
-                                modifier = Modifier.size(18.dp)
-                            )
+                            if (act.status == "error") {
+                                Icon(
+                                    imageVector = Icons.Outlined.Error,
+                                    contentDescription = null,
+                                    tint = Color(0xFFF44336),
+                                    modifier = Modifier.size(18.dp)
+                                )
+                            } else {
+                                Icon(
+                                    imageVector = Icons.Outlined.CheckCircle,
+                                    contentDescription = null,
+                                    tint = Color(0xFF4CAF50),
+                                    modifier = Modifier.size(18.dp)
+                                )
+                            }
                             Spacer(Modifier.width(8.dp))
-                            Text("${act.type.replaceFirstChar { it.uppercase() }} (${act.status})")
-                            Spacer(Modifier.weight(1f))
+                            Text(
+                                "${act.type.replaceFirstChar { it.uppercase() }} (${act.status})",
+                                fontWeight = if (act.status == "error") FontWeight.SemiBold else FontWeight.Normal,
+                                color = if (act.status == "error") Color(0xFFF44336) else Color.Unspecified,
+                                modifier = Modifier.weight(1f)
+                            )
                             act.preview?.let { preview ->
                                 Text(
                                     "Preview: $preview",
@@ -245,6 +259,19 @@ fun MainScreen(
                                     fontSize = MaterialTheme.typography.bodySmall.fontSize
                                 )
                             }
+                            act.error?.let { errorMsg ->
+                                Text(
+                                    "Error: $errorMsg",
+                                    color = Color(0xFFF44336),
+                                    fontSize = MaterialTheme.typography.bodySmall.fontSize
+                                )
+                            }
+                            Spacer(Modifier.width(8.dp))
+                            Text(
+                                formatDateTime(act.timestamp),
+                                color = Color.Gray,
+                                fontSize = MaterialTheme.typography.bodySmall.fontSize
+                            )
                         }
                     }
                 }

