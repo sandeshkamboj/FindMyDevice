@@ -27,11 +27,31 @@ android {
         }
     }
 
+    // --- BEGIN: Signing config using local.properties or environment variables ---
+    signingConfigs {
+        release {
+            def props = new Properties()
+            def localPropsFile = rootProject.file("local.properties")
+            if (localPropsFile.exists()) {
+                localPropsFile.withInputStream { props.load(it) }
+            }
+            def getProp = { name ->
+                return System.getenv(name) ?: props[name] ?: ''
+            }
+            storeFile file(getProp('RELEASE_STORE_FILE'))
+            storePassword getProp('RELEASE_STORE_PASSWORD')
+            keyAlias getProp('RELEASE_KEY_ALIAS')
+            keyPassword getProp('RELEASE_KEY_PASSWORD')
+        }
+    }
+    // --- END: Signing config ---
+
     buildTypes {
         release {
             minifyEnabled = true
             shrinkResources = true
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+            signingConfig signingConfigs.release
         }
         debugMini {
             initWith(debug)
@@ -80,6 +100,7 @@ ktlint {
 
 dependencies {
     implementation 'androidx.core:core-ktx:1.13.1'
+    implementation 'androidx.fragment:fragment-ktx:1.6.2' // Added to fix release build error (registerForActivityResult API)
     implementation 'androidx.lifecycle:lifecycle-runtime-ktx:2.7.0'
     implementation 'androidx.activity:activity-compose:1.9.0'
     implementation platform('androidx.compose:compose-bom:2024.05.00')
