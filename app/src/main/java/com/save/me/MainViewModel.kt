@@ -1,6 +1,8 @@
 package com.save.me
 
+import android.app.ActivityManager
 import android.app.Application
+import android.content.Context
 import androidx.compose.runtime.*
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
@@ -54,11 +56,29 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             if (!success) {
                 _actionError.value = "Failed to run $type action"
             }
+            refreshServiceStatus()
         }
     }
 
     // Clear error after snackbar is dismissed
     fun clearError() {
         _actionError.value = null
+    }
+
+    // Refresh ForegroundActionService status
+    fun refreshServiceStatus() {
+        _serviceActive.value = isServiceRunning(getApplication(), ForegroundActionService::class.java)
+    }
+
+    // Check if a service is running
+    private fun isServiceRunning(context: Context, serviceClass: Class<*>): Boolean {
+        val activityManager = context.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
+        @Suppress("DEPRECATION")
+        for (service in activityManager.getRunningServices(Int.MAX_VALUE)) {
+            if (serviceClass.name == service.service.className) {
+                return true
+            }
+        }
+        return false
     }
 }

