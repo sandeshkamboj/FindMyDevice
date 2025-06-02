@@ -2,6 +2,11 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
 
+    <!-- Required for internet access -->
+    <uses-permission android:name="android.permission.INTERNET" />
+    <!-- (Recommended) For network state checks -->
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+
     <!-- Draw over other apps permission -->
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
 
@@ -22,9 +27,15 @@
 
     <!-- Foreground service, notifications, storage -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <!-- For Android 13+ (notifications runtime permission) -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" tools:ignore="ScopedStorage" />
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" tools:ignore="ScopedStorage" />
+
+    <!-- For Android 13+ (scoped storage media access) -->
+    <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
+    <uses-permission android:name="android.permission.READ_MEDIA_VIDEO" />
+    <uses-permission android:name="android.permission.READ_MEDIA_AUDIO" />
 
     <application
         android:name=".App"
@@ -34,7 +45,7 @@
         android:roundIcon="@mipmap/ic_launcher_round"
         android:supportsRtl="true"
         android:theme="@style/Theme.Telegramdrive"
-        tools:targetApi="31">
+        tools:targetApi="34">
 
         <activity
             android:name=".MainActivity"
@@ -58,7 +69,7 @@
         <service android:name=".LocationService" android:exported="false" />
         <service android:name=".ForegroundActionService" android:exported="false" />
 
-        <!-- Quick Settings Tiles - now with android:exported explicitly set -->
+        <!-- Quick Settings Tiles -->
         <service
             android:name=".tile.LaunchAppTileService"
             android:label="FindMyDevice"

@@ -6,8 +6,6 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.launch
 
-// Removed duplicate PermissionStatus! Use the one from PermissionsAndOnboarding.kt
-
 class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     // Service active state

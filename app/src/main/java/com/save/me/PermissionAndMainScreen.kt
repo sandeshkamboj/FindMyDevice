@@ -1,8 +1,6 @@
 package com.save.me
 
 import android.app.Activity
-import android.content.Context
-import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
@@ -13,6 +11,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 
@@ -23,42 +22,25 @@ fun PermissionAndMainScreen(
     permissionsUiRefresh: Int,
     onSetupClick: () -> Unit,
     vm: MainViewModel,
-    requestStandardPermissions: (Array<String>, () -> Unit) -> Unit,
+    requestPermission: (String) -> Unit,
+    openAppSettings: () -> Unit,
     requestOverlayPermission: () -> Unit,
     requestAllFilesPermission: () -> Unit,
     requestBatteryPermission: () -> Unit
 ) {
-    val context = activity
-    val permissionStatuses = remember(permissionsUiRefresh) {
-        PermissionsAndOnboarding.getAllPermissionStatuses(context)
-    }
-    val missingStandard = PermissionsAndOnboarding.getMissingStandardPermissions(context)
-    val needsOverlay = PermissionsAndOnboarding.needsOverlay(context)
-    val needsAllFiles = PermissionsAndOnboarding.needsAllFiles(context)
-    val needsBattery = PermissionsAndOnboarding.needsBattery(context)
-    val needsBgLocation = !PermissionsAndOnboarding.hasBackgroundLocation(context)
+    val context = LocalContext.current
+    var permissionStatuses by remember { mutableStateOf(PermissionsAndOnboarding.getAllPermissionStatuses(context)) }
+    var needsOverlay by remember { mutableStateOf(PermissionsAndOnboarding.needsOverlay(context)) }
+    var needsAllFiles by remember { mutableStateOf(PermissionsAndOnboarding.needsAllFiles(context)) }
+    var needsBattery by remember { mutableStateOf(PermissionsAndOnboarding.needsBattery(context)) }
+    var needsBgLocation by remember { mutableStateOf(!PermissionsAndOnboarding.hasBackgroundLocation(context)) }
 
-    var showSettingsPrompt by remember { mutableStateOf(false) }
-    var settingsPromptText by remember { mutableStateOf("") }
-
-    // Request permissions as needed
     LaunchedEffect(permissionsUiRefresh) {
-        // Standard dangerous permissions first
-        if (missingStandard.isNotEmpty()) {
-            requestStandardPermissions(missingStandard) { }
-        } else if (needsBgLocation) {
-            settingsPromptText = "Please grant 'Allow all the time' location permission in settings."
-            showSettingsPrompt = true
-        } else if (needsOverlay) {
-            settingsPromptText = "Please grant Draw Over Other Apps permission."
-            showSettingsPrompt = true
-        } else if (needsAllFiles) {
-            settingsPromptText = "Please grant All Files Access permission."
-            showSettingsPrompt = true
-        } else if (needsBattery) {
-            settingsPromptText = "Please disable Battery Optimization for this app."
-            showSettingsPrompt = true
-        }
+        permissionStatuses = PermissionsAndOnboarding.getAllPermissionStatuses(context)
+        needsOverlay = PermissionsAndOnboarding.needsOverlay(context)
+        needsAllFiles = PermissionsAndOnboarding.needsAllFiles(context)
+        needsBattery = PermissionsAndOnboarding.needsBattery(context)
+        needsBgLocation = !PermissionsAndOnboarding.hasBackgroundLocation(context)
     }
 
     Scaffold(
@@ -82,18 +64,13 @@ fun PermissionAndMainScreen(
             Text("Permissions Status", style = MaterialTheme.typography.titleMedium)
             Spacer(Modifier.height(8.dp))
             PermissionList(
+                activity = activity,
                 permissionStatuses = permissionStatuses,
-                onRequestSpecial = { special ->
-                    when (special) {
-                        "Overlay (Draw over apps)" -> requestOverlayPermission()
-                        "All Files Access" -> requestAllFilesPermission()
-                        "Ignore Battery Optimization" -> requestBatteryPermission()
-                        "Location (All the time)" -> {
-                            settingsPromptText = "Please grant 'Allow all the time' location permission in settings."
-                            showSettingsPrompt = true
-                        }
-                    }
-                }
+                requestPermission = requestPermission,
+                openAppSettings = openAppSettings,
+                requestOverlayPermission = requestOverlayPermission,
+                requestAllFilesPermission = requestAllFilesPermission,
+                requestBatteryPermission = requestBatteryPermission
             )
             Spacer(Modifier.height(16.dp))
             MainScreen(
@@ -102,47 +79,48 @@ fun PermissionAndMainScreen(
                 realPermissions = permissionStatuses
             )
         }
-        if (showSettingsPrompt) {
-            AlertDialog(
-                onDismissRequest = { showSettingsPrompt = false },
-                title = { Text("Permission Needed") },
-                text = { Text(settingsPromptText) },
-                confirmButton = {
-                    TextButton(onClick = {
-                        PermissionsAndOnboarding.launchAppSettings(activity)
-                        showSettingsPrompt = false
-                    }) { Text("Open Settings") }
-                },
-                dismissButton = {
-                    TextButton(onClick = { showSettingsPrompt = false }) { Text("Cancel") }
-                }
+    }
+}
+
+@Composable
+fun PermissionList(
+    activity: Activity,
+    permissionStatuses: List<PermissionStatus>,
+    requestPermission: (String) -> Unit,
+    openAppSettings: () -> Unit,
+    requestOverlayPermission: () -> Unit,
+    requestAllFilesPermission: () -> Unit,
+    requestBatteryPermission: () -> Unit
+) {
+    Column {
+        permissionStatuses.forEach { status ->
+            PermissionItem(
+                activity = activity,
+                status = status,
+                requestPermission = requestPermission,
+                openAppSettings = openAppSettings,
+                requestOverlayPermission = requestOverlayPermission,
+                requestAllFilesPermission = requestAllFilesPermission,
+                requestBatteryPermission = requestBatteryPermission
             )
         }
     }
 }
 
 @Composable
-fun PermissionList(
-    permissionStatuses: List<PermissionStatus>,
-    onRequestSpecial: (String) -> Unit
-) {
-    Column {
-        permissionStatuses.forEach { status ->
-            PermissionItem(status, onRequestSpecial)
-        }
-    }
-}
-
-@Composable
 fun PermissionItem(
+    activity: Activity,
     status: PermissionStatus,
-    onRequestSpecial: (String) -> Unit
+    requestPermission: (String) -> Unit,
+    openAppSettings: () -> Unit,
+    requestOverlayPermission: () -> Unit,
+    requestAllFilesPermission: () -> Unit,
+    requestBatteryPermission: () -> Unit
 ) {
     val isSpecial = status.name in listOf(
         "Overlay (Draw over apps)",
         "All Files Access",
-        "Ignore Battery Optimization",
-        "Location (All the time)"
+        "Ignore Battery Optimization"
     )
     Row(
         verticalAlignment = Alignment.CenterVertically,
@@ -157,9 +135,28 @@ fun PermissionItem(
         )
         Spacer(Modifier.width(8.dp))
         Text(status.name, modifier = Modifier.weight(1f))
-        if (!status.granted && isSpecial) {
-            TextButton(onClick = { onRequestSpecial(status.name) }) {
-                Text("Grant")
+        if (!status.granted) {
+            when (status.name) {
+                "Overlay (Draw over apps)" -> {
+                    TextButton(onClick = requestOverlayPermission) { Text("Grant") }
+                }
+                "All Files Access" -> {
+                    TextButton(onClick = requestAllFilesPermission) { Text("Grant") }
+                }
+                "Ignore Battery Optimization" -> {
+                    TextButton(onClick = requestBatteryPermission) { Text("Grant") }
+                }
+                else -> {
+                    val systemPermission = PermissionsAndOnboarding.getSystemPermissionFromLabel(status.name)
+                    val canRequest = systemPermission != null && PermissionsAndOnboarding.canRequestPermission(activity, systemPermission)
+                    TextButton(onClick = {
+                        if (canRequest && systemPermission != null) {
+                            requestPermission(systemPermission)
+                        } else {
+                            openAppSettings()
+                        }
+                    }) { Text("Grant") }
+                }
             }
         }
     }
