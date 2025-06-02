@@ -188,7 +188,7 @@ class ForegroundActionService : Service() {
 
     /**
      * Show notification and start foreground with the correct type for the action.
-     * For vibrate/ring, use FOREGROUND_SERVICE_TYPE_NONE.
+     * For vibrate/ring/other, fallback to camera.
      */
     private fun showNotificationForAction(action: String) {
         val notification = androidx.core.app.NotificationCompat.Builder(this, NotificationHelper.CHANNEL_ID)
@@ -196,33 +196,13 @@ class ForegroundActionService : Service() {
             .setContentText("Running background actions...")
             .setSmallIcon(android.R.drawable.ic_menu_camera)
             .build()
+        // Use only types declared in the manifest (camera|microphone|location).
         val type = when (action) {
-            "photo", "video" -> {
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q)
-                    0x00000001 // Service.FOREGROUND_SERVICE_TYPE_CAMERA
-                else 0
-            }
-            "audio" -> {
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q)
-                    0x00000004 // Service.FOREGROUND_SERVICE_TYPE_MICROPHONE
-                else 0
-            }
-            "location" -> {
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q)
-                    0x00000002 // Service.FOREGROUND_SERVICE_TYPE_LOCATION
-                else 0
-            }
-            // For vibrate and ring, always use NONE (safe for Android 14+)
-            "vibrate", "ring" -> {
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q)
-                    0x00000000 // Service.FOREGROUND_SERVICE_TYPE_NONE
-                else 0
-            }
-            else -> {
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q)
-                    0x00000000 // Service.FOREGROUND_SERVICE_TYPE_NONE
-                else 0
-            }
+            "photo", "video" -> 0x00000001 // camera
+            "audio" -> 0x00000004 // microphone
+            "location" -> 0x00000002 // location
+            // For vibrate, ring, or any other: fallback to "camera" (cannot use NONE on Android 14+)
+            else -> 0x00000001 // camera
         }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             startForeground(1, notification, type)
