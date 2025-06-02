@@ -6,6 +6,7 @@ import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
 import android.provider.Settings
+import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
@@ -13,6 +14,7 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.runtime.*
 import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.google.firebase.messaging.FirebaseMessaging
 import com.save.me.ui.theme.AppTheme
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -31,6 +33,26 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
+        // --- FIX START: Subscribe to FCM topic "all" and log FCM token for debugging ---
+        FirebaseMessaging.getInstance().subscribeToTopic("all")
+            .addOnCompleteListener { task ->
+                if (task.isSuccessful) {
+                    Log.d("FCM", "Subscribed to 'all' topic")
+                } else {
+                    Log.e("FCM", "Failed to subscribe to 'all' topic", task.exception)
+                }
+            }
+
+        FirebaseMessaging.getInstance().token.addOnCompleteListener { task ->
+            if (task.isSuccessful) {
+                Log.d("FCM", "Device FCM token: ${task.result}")
+            } else {
+                Log.e("FCM", "Failed to get FCM token", task.exception)
+            }
+        }
+        // --- FIX END ---
+
         showSetup = shouldShowSetup(this)
         setContent {
             AppTheme {
