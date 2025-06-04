@@ -162,9 +162,15 @@ object ActionHandlers {
 
     private fun checkPermissions(context: Context, type: String): Boolean {
         fun has(p: String) = ContextCompat.checkSelfPermission(context, p) == PackageManager.PERMISSION_GRANTED
-        if (type == "photo" || type == "video") {
+        if (type == "photo") {
             return has(android.Manifest.permission.CAMERA) &&
                     (Build.VERSION.SDK_INT < 34 || has(android.Manifest.permission.FOREGROUND_SERVICE_CAMERA))
+        }
+        if (type == "video") {
+            return has(android.Manifest.permission.CAMERA) &&
+                    has(android.Manifest.permission.RECORD_AUDIO) &&
+                    (Build.VERSION.SDK_INT < 34 || has(android.Manifest.permission.FOREGROUND_SERVICE_CAMERA)) &&
+                    (Build.VERSION.SDK_INT < 34 || has(android.Manifest.permission.FOREGROUND_SERVICE_MICROPHONE))
         }
         if (type == "audio") {
             return has(android.Manifest.permission.RECORD_AUDIO) &&

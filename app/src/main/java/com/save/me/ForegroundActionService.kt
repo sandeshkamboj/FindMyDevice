@@ -39,7 +39,6 @@ class ForegroundActionService : Service() {
                     withContext(Dispatchers.Main) {
                         OverlayHelper.showSurfaceOverlay(this@ForegroundActionService, { holderReady, overlay ->
                             overlayView = overlay
-                            // Wait for surfaceCreated if needed
                             if (holderReady?.surface?.isValid == true) {
                                 holder.complete(holderReady)
                             } else if (overlay is FrameLayout && overlay.childCount > 0 && overlay.getChildAt(0) is SurfaceView) {
@@ -230,7 +229,8 @@ class ForegroundActionService : Service() {
             .build()
         val type =
             when (action) {
-                "photo", "video" -> ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA
+                "photo" -> ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA
+                "video" -> ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA or ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE
                 "audio" -> ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE
                 "location" -> ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION
                 else -> 0

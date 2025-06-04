@@ -1,83 +1,99 @@
 package com.save.me
 
+import android.app.Activity
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ArrowDropDown
+import androidx.compose.material.icons.filled.ArrowRight
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Edit
-import androidx.compose.material.icons.outlined.CheckCircle
-import androidx.compose.material.icons.outlined.Error
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.google.firebase.messaging.FirebaseMessaging
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.tasks.await
 import kotlinx.coroutines.withContext
-import java.net.HttpURLConnection
-import java.net.URL
-import com.save.me.formatDateTime
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun MainScreen(
+    activity: Activity,
     onSetupClick: (() -> Unit)? = null,
+    onRefreshClick: (() -> Unit)? = null,
     vm: MainViewModel = viewModel(),
-    realPermissions: List<PermissionStatus>
+    realPermissions: List<PermissionStatus>,
+    requestPermission: (String) -> Unit,
+    openAppSettings: () -> Unit,
+    requestOverlayPermission: () -> Unit,
+    requestAllFilesPermission: () -> Unit,
+    requestBatteryPermission: () -> Unit,
+    showTitle: Boolean = true,
+    permissionsUiRefresh: Int
 ) {
     val snackbarHostState = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
-
     val nickname = vm.getCurrentNickname()
     val botToken = vm.getCurrentBotToken()
     val serviceActive by vm.serviceActive
-    val actionHistory = vm.actionHistory
     val actionInProgress by vm.actionInProgress
     val actionError by vm.actionError
 
     var fcmStatus by remember { mutableStateOf(false) }
-    var fcmStatusMessage by remember { mutableStateOf<String?>(null) }
     var telegramStatus by remember { mutableStateOf(false) }
-    var telegramStatusMessage by remember { mutableStateOf<String?>(null) }
 
-    // FCM Status: get actual token from FirebaseMessaging
-    LaunchedEffect(Unit) {
-        fcmStatus = false
-        fcmStatusMessage = null
-        try {
-            val token = withContext(Dispatchers.IO) {
-                FirebaseMessaging.getInstance().token.await()
+    // Connection status refresh logic
+    val refreshConnectionStatuses = {
+        scope.launch {
+            // FCM Status: get actual token from FirebaseMessaging
+            try {
+                val token = withContext(Dispatchers.IO) {
+                    FirebaseMessaging.getInstance().token.await()
+                }
+                fcmStatus = token.isNotBlank()
+            } catch (e: Exception) {
+                fcmStatus = false
             }
-            fcmStatus = token.isNotBlank()
-            fcmStatusMessage = if (fcmStatus) "OK" else "Token missing"
-        } catch (e: Exception) {
-            fcmStatus = false
-            fcmStatusMessage = e.localizedMessage ?: "FCM unavailable"
+            // Telegram Bot API Status /getMe
+            if (botToken.isNotBlank()) {
+                val (ok, _) = checkTelegramBotApi(botToken)
+                telegramStatus = ok
+            } else {
+                telegramStatus = false
+            }
         }
     }
 
-    // Telegram Bot API Status /getMe
-    LaunchedEffect(botToken) {
-        telegramStatus = false
-        telegramStatusMessage = null
-        if (botToken.isNotBlank()) {
-            scope.launch {
-                val (ok, msg) = checkTelegramBotApi(botToken)
-                telegramStatus = ok
-                telegramStatusMessage = msg
-            }
-        }
+    // Call refresh on permission or refresh click
+    LaunchedEffect(permissionsUiRefresh) {
+        refreshConnectionStatuses()
+    }
+    // Also on first launch
+    LaunchedEffect(Unit) {
+        refreshConnectionStatuses()
     }
 
     // Ensure service status is refreshed when screen is shown or after actions
@@ -98,180 +114,343 @@ fun MainScreen(
         }
     }
 
-    Scaffold(
-        topBar = {
-            TopAppBar(
-                title = { Text("FindMyDevice") },
-            )
-        },
-        snackbarHost = { SnackbarHost(hostState = snackbarHostState) }
-    ) { innerPadding ->
-        Column(
-            Modifier
-                .padding(innerPadding)
-                .fillMaxSize()
-                .verticalScroll(rememberScrollState())
-                .padding(16.dp)
+    // Start the permission tab as collapsed
+    var permissionsExpanded by remember { mutableStateOf(false) }
+
+    // If you want the header bar with refresh/settings here (standalone), use this:
+    if (showTitle) {
+        var refreshAnimating by remember { mutableStateOf(false) }
+        var gearAnimating by remember { mutableStateOf(false) }
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(bottom = 16.dp, top = 8.dp),
+            verticalAlignment = Alignment.CenterVertically
         ) {
-            // Device Nickname & Bot Token
+            Text(
+                "Find My Device",
+                style = MaterialTheme.typography.headlineSmall,
+                fontWeight = FontWeight.Bold,
+                modifier = Modifier
+                    .weight(1f)
+            )
+            AnimatedRotateIconButton(
+                icon = Icons.Filled.Refresh,
+                contentDescription = "Refresh Status",
+                isRotating = refreshAnimating,
+                onClick = {
+                    refreshAnimating = true
+                    onRefreshClick?.invoke()
+                },
+                onAnimationEnd = { refreshAnimating = false }
+            )
+            AnimatedRotateIconButton(
+                icon = Icons.Filled.Edit,
+                contentDescription = "Setup Device",
+                isRotating = gearAnimating,
+                onClick = {
+                    gearAnimating = true
+                    onSetupClick?.invoke()
+                },
+                onAnimationEnd = { gearAnimating = false }
+            )
+        }
+    }
+
+    Column(
+        Modifier
+            .fillMaxSize()
+            .verticalScroll(rememberScrollState())
+            .padding(0.dp)
+    ) {
+        // Device Username Row
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 4.dp)
+        ) {
+            Text(
+                text = "Device Username",
+                fontWeight = FontWeight.Bold,
+                fontSize = 17.sp,
+                modifier = Modifier.weight(1f)
+            )
+            IconButton(
+                onClick = { onSetupClick?.invoke() }
+            ) {
+                Icon(Icons.Filled.Edit, contentDescription = "Edit Nickname")
+            }
+        }
+        // Nickname Card - stretched to full width
+        Card(
+            shape = RoundedCornerShape(12.dp),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 4.dp)
+        ) {
             Row(
                 verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier.fillMaxWidth()
+                modifier = Modifier
+                    .padding(horizontal = 16.dp, vertical = 10.dp)
             ) {
                 Text(
-                    text = "Device: $nickname",
-                    fontWeight = FontWeight.Bold,
+                    text = nickname,
+                    fontSize = 15.sp,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    fontWeight = FontWeight.Medium
+                )
+            }
+        }
+
+        Spacer(Modifier.height(14.dp))
+
+        // Bot Token Row (with pencil at end)
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 4.dp)
+        ) {
+            Text(
+                text = "Device Token",
+                fontWeight = FontWeight.Bold,
+                fontSize = 17.sp,
+                modifier = Modifier.weight(1f)
+            )
+            IconButton(
+                onClick = { onSetupClick?.invoke() }
+            ) {
+                Icon(Icons.Filled.Edit, contentDescription = "Edit bot token")
+            }
+        }
+        // Bot Token Card - stretched to full width, token inside horizontal scroll if needed
+        Card(
+            shape = RoundedCornerShape(12.dp),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 4.dp)
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier
+                    .padding(horizontal = 16.dp, vertical = 10.dp)
+                    .horizontalScroll(rememberScrollState())
+            ) {
+                Text(
+                    text = botToken,
+                    fontSize = 15.sp,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    fontWeight = FontWeight.Medium,
+                )
+            }
+        }
+
+        Spacer(Modifier.height(20.dp))
+
+        // Connection Status Section
+        Text(
+            "Connection Status:",
+            fontWeight = FontWeight.SemiBold,
+            modifier = Modifier.padding(horizontal = 16.dp)
+        )
+        Spacer(Modifier.height(8.dp))
+
+        // FCM Status row
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp)
+        ) {
+            StatusDot(fcmStatus)
+            Spacer(Modifier.width(8.dp))
+            Text("FCM")
+            Spacer(Modifier.width(8.dp))
+            Text(": ${if (fcmStatus) "Connected" else "Not Connected"}")
+        }
+        // Telegram Bot status row
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp)
+        ) {
+            StatusDot(telegramStatus)
+            Spacer(Modifier.width(8.dp))
+            Text("Telegram Bot API")
+            Spacer(Modifier.width(8.dp))
+            Text(": ${if (telegramStatus) "Connected" else "Not Connected"}")
+        }
+        // Service Status row - same style as above, only circle is colored
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp)
+        ) {
+            StatusDot(serviceActive)
+            Spacer(Modifier.width(8.dp))
+            Text("Service Status")
+            Spacer(Modifier.width(8.dp))
+            Text(": ${if (serviceActive) "Active" else "Inactive"}")
+        }
+
+        Spacer(Modifier.height(20.dp))
+
+        // Expandable Permission Status Section with Grant button
+        PermissionStatusExpandableTab(
+            activity = activity,
+            realPermissions = realPermissions,
+            expanded = permissionsExpanded,
+            onExpandToggle = { permissionsExpanded = !permissionsExpanded },
+            requestPermission = requestPermission,
+            openAppSettings = openAppSettings,
+            requestOverlayPermission = requestOverlayPermission,
+            requestAllFilesPermission = requestAllFilesPermission,
+            requestBatteryPermission = requestBatteryPermission
+        )
+
+        Spacer(Modifier.height(20.dp))
+
+        // In-progress action
+        actionInProgress?.let { action ->
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp)
+            ) {
+                CircularProgressIndicator(
+                    Modifier.size(18.dp)
+                )
+                Spacer(Modifier.width(8.dp))
+                Text(
+                    "Running: ${action.type.replaceFirstChar { it.uppercase() }}",
+                    fontWeight = FontWeight.SemiBold
+                )
+            }
+            Spacer(Modifier.height(20.dp))
+        }
+    }
+}
+
+@Composable
+fun AnimatedRotateIconButton(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    contentDescription: String,
+    isRotating: Boolean,
+    onClick: () -> Unit,
+    onAnimationEnd: () -> Unit
+) {
+    val rotation = remember { Animatable(0f) }
+    LaunchedEffect(isRotating) {
+        if (isRotating) {
+            rotation.snapTo(0f)
+            rotation.animateTo(
+                360f,
+                animationSpec = tween(600)
+            )
+            onAnimationEnd()
+        }
+    }
+    IconButton(
+        onClick = {
+            if (!isRotating) onClick()
+        }
+    ) {
+        Icon(
+            icon,
+            contentDescription = contentDescription,
+            modifier = Modifier
+                .size(28.dp)
+                .graphicsLayer {
+                    rotationZ = rotation.value
+                }
+        )
+    }
+}
+
+@Composable
+fun PermissionStatusExpandableTab(
+    activity: Activity,
+    realPermissions: List<PermissionStatus>,
+    expanded: Boolean,
+    onExpandToggle: () -> Unit,
+    requestPermission: (String) -> Unit,
+    openAppSettings: () -> Unit,
+    requestOverlayPermission: () -> Unit,
+    requestAllFilesPermission: () -> Unit,
+    requestBatteryPermission: () -> Unit
+) {
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable { onExpandToggle() }
+    ) {
+        Column {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier
+                    .padding(horizontal = 16.dp, vertical = 8.dp)
+            ) {
+                Icon(
+                    imageVector = if (expanded) Icons.Filled.ArrowDropDown else Icons.Filled.ArrowRight,
+                    contentDescription = null,
+                    modifier = Modifier.size(28.dp)
+                )
+                Text(
+                    "Permissions Status",
+                    style = MaterialTheme.typography.titleMedium,
                     modifier = Modifier.weight(1f)
                 )
-                IconButton(onClick = {
-                    onSetupClick?.invoke()
-                }) {
-                    Icon(Icons.Filled.Edit, contentDescription = "Edit Nickname")
-                }
             }
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier.fillMaxWidth()
+            AnimatedVisibility(
+                visible = expanded,
+                enter = expandVertically(),
+                exit = shrinkVertically()
             ) {
-                Text(
-                    text = "Bot Token: ${if (botToken.length > 8) botToken.take(8) + "..." else botToken}",
-                    modifier = Modifier.weight(1f)
-                )
-                IconButton(onClick = {
-                    onSetupClick?.invoke()
-                }) {
-                    Icon(Icons.Filled.Edit, contentDescription = "Edit bot token")
-                }
-            }
-
-            Spacer(Modifier.height(20.dp))
-
-            // Connection Status Section
-            Text("Connection Status:", fontWeight = FontWeight.SemiBold)
-            Spacer(Modifier.height(8.dp))
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                StatusDot(fcmStatus)
-                Spacer(Modifier.width(8.dp))
-                Text("FCM: ${if (fcmStatus) "Connected" else "Not Connected"}")
-                fcmStatusMessage?.let { msg ->
-                    Text(" ($msg)", color = Color.Gray, fontSize = MaterialTheme.typography.bodySmall.fontSize)
-                }
-            }
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                StatusDot(telegramStatus)
-                Spacer(Modifier.width(8.dp))
-                Text("Telegram Bot API: ${if (telegramStatus) "Connected" else "Not Connected"}")
-                telegramStatusMessage?.let { msg ->
-                    Text(" ($msg)", color = Color.Gray, fontSize = MaterialTheme.typography.bodySmall.fontSize)
-                }
-            }
-
-            Spacer(Modifier.height(20.dp))
-
-            // Service Status
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Text("Service Status: ")
-                Box(
-                    Modifier
-                        .size(14.dp)
-                        .clip(CircleShape)
-                        .background(if (serviceActive) Color(0xFF4CAF50) else Color(0xFFF44336))
-                )
-                Spacer(Modifier.width(6.dp))
-                Text(
-                    if (serviceActive) "Active" else "Inactive",
-                    color = if (serviceActive) Color(0xFF4CAF50) else Color(0xFFF44336)
-                )
-            }
-
-            Spacer(Modifier.height(20.dp))
-
-            // In-progress action
-            actionInProgress?.let { action ->
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    CircularProgressIndicator(
-                        Modifier.size(18.dp)
-                    )
-                    Spacer(Modifier.width(8.dp))
-                    Text(
-                        "Running: ${action.type.replaceFirstChar { it.uppercase() }}",
-                        fontWeight = FontWeight.SemiBold
-                    )
-                }
-                Spacer(Modifier.height(20.dp))
-            }
-
-            // Recent actions - now with error reporting and preview
-            Text("Recent Remote Actions:", fontWeight = FontWeight.SemiBold)
-            if (actionHistory.isEmpty()) {
-                Text("No actions yet.", color = Color.Gray)
-            } else {
-                LazyColumn(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .heightIn(max = 300.dp)
-                ) {
-                    items(actionHistory) { act ->
+                Column(Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
+                    realPermissions.forEach { status ->
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .padding(vertical = 2.dp)
                         ) {
-                            if (act.status == "error") {
-                                Icon(
-                                    imageVector = Icons.Outlined.Error,
-                                    contentDescription = null,
-                                    tint = Color(0xFFF44336),
-                                    modifier = Modifier.size(18.dp)
-                                )
-                            } else {
-                                Icon(
-                                    imageVector = Icons.Outlined.CheckCircle,
-                                    contentDescription = null,
-                                    tint = Color(0xFF4CAF50),
-                                    modifier = Modifier.size(18.dp)
-                                )
-                            }
-                            Spacer(Modifier.width(8.dp))
-                            Text(
-                                "${act.type.replaceFirstChar { it.uppercase() }} (${act.status})",
-                                fontWeight = if (act.status == "error") FontWeight.SemiBold else FontWeight.Normal,
-                                color = if (act.status == "error") Color(0xFFF44336) else Color.Unspecified,
-                                modifier = Modifier.weight(1f)
+                            Icon(
+                                imageVector = if (status.granted) Icons.Filled.Check else Icons.Filled.Close,
+                                contentDescription = null,
+                                tint = if (status.granted) Color(0xFF4CAF50) else Color(0xFFF44336)
                             )
-                            act.preview?.let { preview ->
-                                Text(
-                                    "Preview: $preview",
-                                    color = Color.Gray,
-                                    fontSize = MaterialTheme.typography.bodySmall.fontSize
-                                )
-                            }
-                            act.error?.let { errorMsg ->
-                                Text(
-                                    "Error: $errorMsg",
-                                    color = Color(0xFFF44336),
-                                    fontSize = MaterialTheme.typography.bodySmall.fontSize
-                                )
-                            }
                             Spacer(Modifier.width(8.dp))
-                            Text(
-                                formatDateTime(act.timestamp),
-                                color = Color.Gray,
-                                fontSize = MaterialTheme.typography.bodySmall.fontSize
-                            )
+                            Text(status.name, modifier = Modifier.weight(1f))
+                            if (!status.granted) {
+                                when (status.name) {
+                                    "Overlay (Draw over apps)" -> {
+                                        TextButton(onClick = requestOverlayPermission) { Text("Grant") }
+                                    }
+                                    "All Files Access" -> {
+                                        TextButton(onClick = requestAllFilesPermission) { Text("Grant") }
+                                    }
+                                    "Ignore Battery Optimization" -> {
+                                        TextButton(onClick = requestBatteryPermission) { Text("Grant") }
+                                    }
+                                    else -> {
+                                        val systemPermission = PermissionsAndOnboarding.getSystemPermissionFromLabel(status.name)
+                                        val canRequest = systemPermission != null && PermissionsAndOnboarding.canRequestPermission(activity, systemPermission)
+                                        TextButton(onClick = {
+                                            if (canRequest && systemPermission != null) {
+                                                requestPermission(systemPermission)
+                                            } else {
+                                                openAppSettings()
+                                            }
+                                        }) { Text("Grant") }
+                                    }
+                                }
+                            }
                         }
                     }
                 }
@@ -281,20 +460,20 @@ fun MainScreen(
 }
 
 @Composable
-fun StatusDot(connected: Boolean) {
+fun StatusDot(active: Boolean) {
     Box(
         Modifier
             .size(14.dp)
             .clip(CircleShape)
-            .background(if (connected) Color(0xFF4CAF50) else Color(0xFFF44336))
+            .background(if (active) Color(0xFF4CAF50) else Color(0xFFF44336))
     )
 }
 
 // Helper: Check Telegram Bot API connection using getMe
 suspend fun checkTelegramBotApi(token: String): Pair<Boolean, String> = withContext(Dispatchers.IO) {
     try {
-        val url = URL("https://api.telegram.org/bot${token}/getMe")
-        val conn = url.openConnection() as HttpURLConnection
+        val url = java.net.URL("https://api.telegram.org/bot${token}/getMe")
+        val conn = url.openConnection() as java.net.HttpURLConnection
         conn.connectTimeout = 3000
         conn.readTimeout = 3000
         conn.requestMethod = "GET"

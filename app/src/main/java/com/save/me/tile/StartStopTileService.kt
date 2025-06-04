@@ -16,18 +16,17 @@ class StartStopTileService : TileService() {
         } else {
             ForegroundActionService.start(this)
         }
-        // After toggling, update the tile state and icon
-        setTileState(!isActive)
+        updateTileState()
     }
 
     override fun onStartListening() {
         super.onStartListening()
-        // Set the tile state each time the Quick Settings are shown
-        setTileState(ForegroundActionService.isRunning(this))
+        updateTileState()
     }
 
-    private fun setTileState(active: Boolean) {
+    private fun updateTileState() {
         val tile = qsTile ?: return
+        val active = ForegroundActionService.isRunning(this)
         tile.state = if (active) Tile.STATE_ACTIVE else Tile.STATE_INACTIVE
         tile.icon = Icon.createWithResource(
             this,

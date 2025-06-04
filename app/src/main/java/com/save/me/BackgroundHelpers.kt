@@ -173,7 +173,6 @@ object CameraBackgroundHelper {
         val recorder = MediaRecorder()
         val future = CompletableDeferred<Boolean>()
         try {
-            // --- MediaRecorder should be configured in this order! ---
             recorder.setAudioSource(MediaRecorder.AudioSource.MIC)
             recorder.setVideoSource(MediaRecorder.VideoSource.SURFACE)
             recorder.setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
@@ -196,8 +195,7 @@ object CameraBackgroundHelper {
                                 session = sess
                                 val capture = device.createCaptureRequest(CameraDevice.TEMPLATE_RECORD)
                                 capture.addTarget(recorderSurface)
-                                // If you want live preview while recording, uncomment the next line:
-                                // capture.addTarget(previewSurface)
+                                capture.addTarget(previewSurface) // <-- Ensure both surfaces are added!
                                 if (flash && (cameraFacing.equals("rear", true) || cameraFacing.equals("back", true))) {
                                     capture.set(CaptureRequest.FLASH_MODE, CaptureRequest.FLASH_MODE_TORCH)
                                 }
