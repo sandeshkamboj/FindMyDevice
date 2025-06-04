@@ -9,6 +9,7 @@ import android.os.Handler
 import android.os.HandlerThread
 import android.os.Looper
 import android.util.Log
+import android.util.Size
 import android.view.SurfaceHolder
 import com.google.android.gms.location.*
 import kotlinx.coroutines.*
@@ -39,13 +40,26 @@ object CameraBackgroundHelper {
         for (id in cameraManager.cameraIdList) {
             val chars = cameraManager.getCameraCharacteristics(id)
             val facingValue = chars.get(CameraCharacteristics.LENS_FACING)
-            if ((facing == "front" && facingValue == CameraCharacteristics.LENS_FACING_FRONT) ||
-                (facing == "rear" && facingValue == CameraCharacteristics.LENS_FACING_BACK)
+            if ((facing.equals("front", true) && facingValue == CameraCharacteristics.LENS_FACING_FRONT) ||
+                ((facing.equals("rear", true) || facing.equals("back", true)) && facingValue == CameraCharacteristics.LENS_FACING_BACK)
             ) {
                 return id
             }
         }
+        // Fallback: return first camera if nothing matches
         return cameraManager.cameraIdList.firstOrNull()
+    }
+
+    private fun getBestJpegSize(cameraManager: CameraManager, cameraId: String): Size {
+        val chars = cameraManager.getCameraCharacteristics(cameraId)
+        val configMap = chars.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP)
+        val outputSizes = configMap?.getOutputSizes(ImageFormat.JPEG)
+        return outputSizes?.let { sizes ->
+            // Prefer 1280x720, 1920x1080, or the largest if not available
+            sizes.find { it.width == 1280 && it.height == 720 }
+                ?: sizes.find { it.width == 1920 && it.height == 1080 }
+                ?: sizes.maxByOrNull { it.width * it.height }!!
+        } ?: Size(1280, 720)
     }
 
     suspend fun takePhoto(
@@ -64,31 +78,27 @@ object CameraBackgroundHelper {
         val handler = Handler(handlerThread.looper)
         val future = CompletableDeferred<Boolean>()
 
+        val jpegSize = getBestJpegSize(cameraManager, cameraId)
+
         try {
             cameraManager.openCamera(cameraId, object : CameraDevice.StateCallback() {
                 override fun onOpened(device: CameraDevice) {
                     cameraDevice = device
-                    val width = 1280 // Bigger preview for better capture (was 640)
-                    val height = 720
-                    imageReader = android.media.ImageReader.newInstance(width, height, ImageFormat.JPEG, 1)
+                    imageReader = android.media.ImageReader.newInstance(jpegSize.width, jpegSize.height, ImageFormat.JPEG, 1)
                     val targets = listOf(surfaceHolder.surface, imageReader!!.surface)
                     device.createCaptureSession(targets, object : CameraCaptureSession.StateCallback() {
                         override fun onConfigured(sess: CameraCaptureSession) {
                             session = sess
-                            // 1. Start preview (required for correct pipeline)
                             val previewRequest = device.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW)
                             previewRequest.addTarget(surfaceHolder.surface)
                             sess.setRepeatingRequest(previewRequest.build(), null, handler)
 
-                            // 2. Wait 400ms to let the preview pipeline warm up
                             handler.postDelayed({
-                                // 3. Build still capture request
                                 val stillRequest = device.createCaptureRequest(CameraDevice.TEMPLATE_STILL_CAPTURE)
                                 stillRequest.addTarget(imageReader!!.surface)
-                                if (flash && cameraFacing == "rear") {
+                                if (flash && (cameraFacing.equals("rear", true) || cameraFacing.equals("back", true))) {
                                     stillRequest.set(CaptureRequest.FLASH_MODE, CaptureRequest.FLASH_MODE_SINGLE)
                                 }
-                                // 4. Capture the photo
                                 sess.capture(stillRequest.build(), object : CameraCaptureSession.CaptureCallback() {
                                     override fun onCaptureCompleted(
                                         s: CameraCaptureSession,
@@ -97,13 +107,19 @@ object CameraBackgroundHelper {
                                     ) {
                                         try {
                                             val img = imageReader!!.acquireLatestImage()
-                                            val buffer = img.planes[0].buffer
-                                            val bytes = ByteArray(buffer.remaining())
-                                            buffer.get(bytes)
-                                            file.writeBytes(bytes)
-                                            img.close()
-                                            future.complete(true)
+                                            if (img != null) {
+                                                val buffer = img.planes[0].buffer
+                                                val bytes = ByteArray(buffer.remaining())
+                                                buffer.get(bytes)
+                                                file.writeBytes(bytes)
+                                                img.close()
+                                                future.complete(true)
+                                            } else {
+                                                Log.e("CameraBackgroundHelper", "Image is null (no data from ImageReader)")
+                                                future.complete(false)
+                                            }
                                         } catch (e: Exception) {
+                                            Log.e("CameraBackgroundHelper", "Exception saving JPEG: $e")
                                             future.complete(false)
                                         }
                                         try { s.close() } catch (_: Exception) {}
@@ -112,7 +128,7 @@ object CameraBackgroundHelper {
                                         handlerThread.quitSafely()
                                     }
                                 }, handler)
-                            }, 400) // Wait at least 400ms
+                            }, 400)
                         }
                         override fun onConfigureFailed(sess: CameraCaptureSession) { future.complete(false) }
                     }, handler)
@@ -176,7 +192,7 @@ object CameraBackgroundHelper {
                             session = sess
                             val capture = device.createCaptureRequest(CameraDevice.TEMPLATE_RECORD)
                             capture.addTarget(recorder.surface)
-                            if (flash && cameraFacing == "rear") {
+                            if (flash && (cameraFacing.equals("rear", true) || cameraFacing.equals("back", true))) {
                                 capture.set(CaptureRequest.FLASH_MODE, CaptureRequest.FLASH_MODE_TORCH)
                             }
                             sess.setRepeatingRequest(capture.build(), null, handler)

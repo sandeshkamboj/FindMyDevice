@@ -53,14 +53,8 @@ object ActionHandlers {
                     )
                     return
                 }
-                OverlayHelper.showSurfaceOverlay(context) { holder, overlay ->
-                    if (holder == null || overlay == null) {
-                        Log.e("ActionHandlers", "Overlay creation failed for photo/video.")
-                        return@showSurfaceOverlay
-                    }
-                    // DO NOT remove overlay here! Pass it to the FGS, which will remove it when done
-                    startCameraActionInvoke(context, type, camera, flash, quality, duration, chatId, holder, overlay)
-                }
+                // Start the service and let it handle overlay creation and management for camera/photo/video
+                startCameraActionInvoke(context, type, camera, flash, quality, duration, chatId)
                 return
             } else {
                 if (OverlayHelper.hasOverlayPermission(context)) {
@@ -78,7 +72,7 @@ object ActionHandlers {
                 }
             }
         } else {
-            startCameraActionInvoke(context, type, camera, flash, quality, duration, chatId, null, null)
+            startCameraActionInvoke(context, type, camera, flash, quality, duration, chatId)
         }
     }
 
@@ -89,9 +83,7 @@ object ActionHandlers {
         flash: String?,
         quality: String?,
         duration: String?,
-        chatId: String?,
-        surfaceHolder: SurfaceHolder?,
-        overlayView: View?
+        chatId: String?
     ) {
         val cam = camera ?: "front"
         val flashEnabled = flash == "true"
@@ -107,9 +99,7 @@ object ActionHandlers {
                 put("quality", qualityInt)
                 put("duration", durationInt)
             },
-            chatId,
-            surfaceHolder,
-            overlayView // Pass overlayView to service so it can remove when finished!
+            chatId
         )
     }
 
@@ -127,18 +117,17 @@ object ActionHandlers {
                     JSONObject().apply {
                         put("duration", durationInt)
                     },
-                    chatId,
-                    null
+                    chatId
                 )
             }
             "location" -> {
-                ForegroundActionService.startLocationAction(context, chatId, null)
+                ForegroundActionService.startLocationAction(context, chatId)
             }
             "ring" -> {
-                ForegroundActionService.startRingAction(context, JSONObject(), null)
+                ForegroundActionService.startRingAction(context, JSONObject())
             }
             "vibrate" -> {
-                ForegroundActionService.startVibrateAction(context, JSONObject(), null)
+                ForegroundActionService.startVibrateAction(context, JSONObject())
             }
             else -> {
                 NotificationHelper.showNotification(context, "Unknown Action", "Action $type is not supported.")

