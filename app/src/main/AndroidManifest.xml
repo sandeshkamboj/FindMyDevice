@@ -2,17 +2,16 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
 
-    <!-- Network, overlay, and boot permissions -->
-    <uses-feature
-        android:name="android.hardware.camera"
-        android:required="false" />
+    <!-- Features -->
+    <uses-feature android:name="android.hardware.camera" android:required="false" />
 
+    <!-- Network & Overlay -->
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
 
-    <!-- Storage and media permissions -->
+    <!-- Storage/Media (modern and legacy for compatibility) -->
     <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE" tools:ignore="ScopedStorage" />
     <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" tools:ignore="ScopedStorage" />
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" tools:ignore="ScopedStorage" />
@@ -20,22 +19,22 @@
     <uses-permission android:name="android.permission.READ_MEDIA_VIDEO" />
     <uses-permission android:name="android.permission.READ_MEDIA_AUDIO" />
 
-    <!-- Notification -->
+    <!-- Notifications -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
     <!-- Vibration -->
     <uses-permission android:name="android.permission.VIBRATE" />
 
-    <!-- Camera and microphone -->
+    <!-- Camera & Microphone -->
     <uses-permission android:name="android.permission.CAMERA" />
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
 
-    <!-- Location permissions -->
+    <!-- Location -->
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_BACKGROUND_LOCATION" />
 
-    <!-- Foreground service permissions for Android 14+ -->
+    <!-- Foreground Service for Android 14+ -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CAMERA" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />
@@ -83,13 +82,14 @@
             android:exported="false"
             android:foregroundServiceType="location" />
 
-        <!-- FINAL FIX: fully qualified name + tools:node="replace" to override any merged manifest -->
+        <!-- Main Foreground Service for multi-purpose use -->
         <service
             android:name="com.save.me.ForegroundActionService"
             android:exported="false"
             android:foregroundServiceType="camera|microphone|location"
             tools:node="replace" />
 
+        <!-- Quick Settings Tiles (optional, if you use them) -->
         <service
             android:name="com.save.me.tile.LaunchAppTileService"
             android:label="FindMyDevice"
