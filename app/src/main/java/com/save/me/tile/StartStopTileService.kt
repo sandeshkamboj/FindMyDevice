@@ -21,17 +21,19 @@ class StartStopTileService : TileService() {
     }
 
     override fun onStartListening() {
+        super.onStartListening()
         // Set the tile state each time the Quick Settings are shown
         setTileState(ForegroundActionService.isRunning(this))
     }
 
     private fun setTileState(active: Boolean) {
-        qsTile.state = if (active) Tile.STATE_ACTIVE else Tile.STATE_INACTIVE
-        qsTile.icon = Icon.createWithResource(
+        val tile = qsTile ?: return
+        tile.state = if (active) Tile.STATE_ACTIVE else Tile.STATE_INACTIVE
+        tile.icon = Icon.createWithResource(
             this,
             if (active) R.drawable.ic_qs_tile_pointer_active else R.drawable.ic_qs_tile_pointer
         )
-        qsTile.label = if (active) "Remote: Active" else "Remote: Inactive"
-        qsTile.updateTile()
+        tile.label = if (active) "Remote: Active" else "Remote: Inactive"
+        tile.updateTile()
     }
 }
