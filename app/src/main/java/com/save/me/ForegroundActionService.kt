@@ -19,7 +19,6 @@ class ForegroundActionService : Service() {
     override fun onCreate() {
         super.onCreate()
         Log.d("ForegroundActionService", "onCreate called")
-        // Do not call startForeground here; must be called with correct type in onStartCommand
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -29,11 +28,9 @@ class ForegroundActionService : Service() {
         job?.cancel()
         job = CoroutineScope(Dispatchers.IO).launch {
             try {
-                // Always show notification with correct FGS type before doing anything else
                 withContext(Dispatchers.Main) {
                     showNotificationForAction(action)
                 }
-                // Handle action as before
                 when (action) {
                     "photo" -> handleCameraAction("photo", intent, chatId)
                     "video" -> handleCameraAction("video", intent, chatId)
