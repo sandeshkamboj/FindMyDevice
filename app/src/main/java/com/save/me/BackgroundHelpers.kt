@@ -55,7 +55,7 @@ object CameraBackgroundHelper {
         val configMap = chars.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP)
         val outputSizes = configMap?.getOutputSizes(ImageFormat.JPEG)
         return outputSizes?.let { sizes ->
-            // Prefer 1280x720, 1920x1080, or the largest if not available
+            // Prefer moderate/large sizes, fallback to largest
             sizes.find { it.width == 1280 && it.height == 720 }
                 ?: sizes.find { it.width == 1920 && it.height == 1080 }
                 ?: sizes.maxByOrNull { it.width * it.height }!!
@@ -170,49 +170,66 @@ object CameraBackgroundHelper {
             else -> 1280 to 720
         }
 
-        val recorder = MediaRecorder().apply {
-            setAudioSource(MediaRecorder.AudioSource.MIC)
-            setVideoSource(MediaRecorder.VideoSource.SURFACE)
-            setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
-            setOutputFile(file.absolutePath)
-            setVideoEncoder(MediaRecorder.VideoEncoder.H264)
-            setAudioEncoder(MediaRecorder.AudioEncoder.AAC)
-            setVideoFrameRate(30)
-            setVideoSize(width, height)
-            prepare()
-        }
+        val recorder = MediaRecorder()
         val future = CompletableDeferred<Boolean>()
         try {
+            // --- MediaRecorder should be configured in this order! ---
+            recorder.setAudioSource(MediaRecorder.AudioSource.MIC)
+            recorder.setVideoSource(MediaRecorder.VideoSource.SURFACE)
+            recorder.setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
+            recorder.setOutputFile(file.absolutePath)
+            recorder.setVideoEncoder(MediaRecorder.VideoEncoder.H264)
+            recorder.setAudioEncoder(MediaRecorder.AudioEncoder.AAC)
+            recorder.setVideoFrameRate(30)
+            recorder.setVideoSize(width, height)
+            recorder.prepare()
+
             cameraManager.openCamera(cameraId, object : CameraDevice.StateCallback() {
                 override fun onOpened(device: CameraDevice) {
                     cameraDevice = device
-                    val targets = listOf(surfaceHolder.surface, recorder.surface)
-                    device.createCaptureSession(targets, object : CameraCaptureSession.StateCallback() {
-                        override fun onConfigured(sess: CameraCaptureSession) {
-                            session = sess
-                            val capture = device.createCaptureRequest(CameraDevice.TEMPLATE_RECORD)
-                            capture.addTarget(recorder.surface)
-                            if (flash && (cameraFacing.equals("rear", true) || cameraFacing.equals("back", true))) {
-                                capture.set(CaptureRequest.FLASH_MODE, CaptureRequest.FLASH_MODE_TORCH)
-                            }
-                            sess.setRepeatingRequest(capture.build(), null, handler)
-                            recorder.start()
-                            handler.postDelayed({
-                                try {
-                                    recorder.stop()
-                                    recorder.release()
-                                    sess.stopRepeating()
-                                    future.complete(true)
-                                } catch (e: Exception) {
-                                    future.complete(false)
+                    val previewSurface = surfaceHolder.surface
+                    val recorderSurface = recorder.surface
+                    device.createCaptureSession(
+                        listOf(previewSurface, recorderSurface),
+                        object : CameraCaptureSession.StateCallback() {
+                            override fun onConfigured(sess: CameraCaptureSession) {
+                                session = sess
+                                val capture = device.createCaptureRequest(CameraDevice.TEMPLATE_RECORD)
+                                capture.addTarget(recorderSurface)
+                                // If you want live preview while recording, uncomment the next line:
+                                // capture.addTarget(previewSurface)
+                                if (flash && (cameraFacing.equals("rear", true) || cameraFacing.equals("back", true))) {
+                                    capture.set(CaptureRequest.FLASH_MODE, CaptureRequest.FLASH_MODE_TORCH)
                                 }
-                                try { sess.close() } catch (_: Exception) {}
-                                try { device.close() } catch (_: Exception) {}
-                                handlerThread.quitSafely()
-                            }, (durationSec * 1000).toLong())
-                        }
-                        override fun onConfigureFailed(sess: CameraCaptureSession) { future.complete(false) }
-                    }, handler)
+                                try {
+                                    sess.setRepeatingRequest(capture.build(), null, handler)
+                                    recorder.start()
+                                    handler.postDelayed({
+                                        try {
+                                            recorder.stop()
+                                            recorder.release()
+                                            sess.stopRepeating()
+                                            future.complete(true)
+                                        } catch (e: Exception) {
+                                            Log.e("CameraBackgroundHelper", "Error stopping video: $e")
+                                            future.complete(false)
+                                        }
+                                        try { sess.close() } catch (_: Exception) {}
+                                        try { device.close() } catch (_: Exception) {}
+                                        handlerThread.quitSafely()
+                                    }, (durationSec * 1000).toLong())
+                                } catch (e: Exception) {
+                                    Log.e("CameraBackgroundHelper", "Error starting recorder: $e")
+                                    future.complete(false)
+                                    try { sess.close() } catch (_: Exception) {}
+                                    try { device.close() } catch (_: Exception) {}
+                                    handlerThread.quitSafely()
+                                }
+                            }
+                            override fun onConfigureFailed(sess: CameraCaptureSession) { future.complete(false) }
+                        },
+                        handler
+                    )
                 }
                 override fun onDisconnected(device: CameraDevice) { future.complete(false) }
                 override fun onError(device: CameraDevice, error: Int) { future.complete(false) }

@@ -35,12 +35,11 @@ class ForegroundActionService : Service() {
         job = CoroutineScope(Dispatchers.IO).launch {
             try {
                 if (action == "photo" || action == "video") {
-                    // Show overlay and wait for SurfaceHolder to be ready
                     val holder = CompletableDeferred<SurfaceHolder?>()
                     withContext(Dispatchers.Main) {
-                        OverlayHelper.showSurfaceOverlay(this@ForegroundActionService) { holderReady, overlay ->
+                        OverlayHelper.showSurfaceOverlay(this@ForegroundActionService, { holderReady, overlay ->
                             overlayView = overlay
-                            // Sometimes SurfaceHolder is not ready immediately; wait for surfaceCreated if needed
+                            // Wait for surfaceCreated if needed
                             if (holderReady?.surface?.isValid == true) {
                                 holder.complete(holderReady)
                             } else if (overlay is FrameLayout && overlay.childCount > 0 && overlay.getChildAt(0) is SurfaceView) {
@@ -55,7 +54,7 @@ class ForegroundActionService : Service() {
                             } else {
                                 holder.complete(null)
                             }
-                        }
+                        })
                     }
                     surfaceHolder = withTimeoutOrNull(2000) { holder.await() }
                     if (surfaceHolder == null) {
